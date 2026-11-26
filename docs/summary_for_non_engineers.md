@@ -56,7 +56,7 @@ two yes/no flags, "protective stop" and "grip lost".
   0.016 seconds after the robot "sent" the stop, and never more than 2.2
   seconds. (The replay is a simulation; no real robot was connected.)
 - A first **prediction model** that tries to warn 10 seconds before a
-  stop. It does pick up a real pattern, mostly *where in the work cycle*
-  the robot is, and it warned in time for 46 of 62 stops in the test
-  period. But it also raised about two false alarms a minute, so it is
-  not ready to be used. The live stop alert is what to rely on.
+  stop. It picks up a real pattern (stops come in clusters, and at certain
+  points in a work cycle), but as a warning system it caught only 10 of
+  57 stops in the test period. It is not ready to be used; the live stop
+  alert is what to rely on.

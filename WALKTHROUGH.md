@@ -775,26 +775,40 @@ the fact. The useful question is **"will a new stop start in the next
   **features never look ahead**; training runs end to end on synthetic
   data.
 
-**Results on the real file (test: 14:57 to 15:36 UTC, 62 stops)**
+**Results on the real file (test: 14:57 to 15:36 UTC, 57 stops)**
 
 | Approach | PR-AUC (95 % CI) | Stops warned in time | False alarms per recorded hour |
 |---|---|---|---|
-| Base rate | 0.209 | 0 / 62 | 0 |
-| "A stop happened recently" rule | 0.157 (0.130–0.187) | 62 / 62 (warns almost all the time) | 41.6 |
-| Logistic regression | 0.251 (0.212–0.297) | 41 / 62 | 153.4 |
-| Gradient-boosted trees | 0.352 (0.266–0.479) | 46 / 62 | 123.1 |
+| Base rate | 0.209 | 0 / 57 | 0 |
+| "A stop happened recently" rule | 0.157 (0.130–0.187) | 57 / 57 (warns almost all the time) | 1.6 |
+| Logistic regression | 0.232 (0.200–0.269) | 29 / 57 | 103.9 |
+| Gradient-boosted trees | 0.325 (0.260–0.407) | 10 / 57 | 32.0 |
 
 **How to read it.** PR-AUC is the area under the precision-recall
 curve. A model that knows nothing scores the share of positive rows
-(here 0.209). The gradient-boosted trees beat that, and even the low end
-of the interval (0.266) is above it, so there is real signal. The most
-useful input is the position in the cycle: stops cluster at certain
-points of a cycle. But ~123 false alarms an hour means the model is not
-usable yet. The test period is short (38 minutes) and has a higher stop
-rate (20.9 % of rows) than training (8.5 %). The model is deterministic:
-two runs give the identical report.
+(here 0.209). The gradient-boosted trees rank risky moments better than
+that, and even the low end of the interval (0.260) is above it. But at
+the threshold chosen on validation, before the test period, they warn
+for only 10 of 57 stops. The test period has 2.5 times the stop rate of
+training, so a threshold from earlier in the day doesn't carry over.
+Logistic regression is no better than chance. The most useful inputs on
+validation: stops in the last ~5 minutes, and position in the cycle.
+Conclusion: real signal, not a usable warning. The model is
+deterministic: two runs give the identical report.
 
-**A mistake that was caught.** The first version of the no-look-ahead
+**Mistakes that were caught.** An independent review agent read the
+Phase 9–11 code (the review bot's weekly budget had run out) and found two
+evaluation bugs that made the model look better than it is. (1) The
+threshold was tuned on a model fit on part of the training data but
+applied to a model refit on all of it, whose scores sit on a different
+scale. Gradient boosting then appeared to warn for 46 of 62 stops; with
+the threshold applied to the model it was tuned on, the answer is 10 of
+57. (2) Episodes were grouped by consecutive row numbers, so a missing
+row split one stop into two (62 counted, 57 real). Episodes are now
+counted by the stop each row points to (`next_stop_event_id`). The best
+model and the permutation importance now use validation, not test.
+
+Also, the first version of the no-look-ahead
 test cut the data 10 rows after the compared rows, so a feature peeking
 10 rows ahead slipped through. Injecting such a feature (`lead()` instead
 of `lag()`) showed the test passing when it should fail. The cut now sits
@@ -808,11 +822,11 @@ right after the compared rows, and the injected leak makes the test fail.
   80 % on the test period and be useless.
 - *Deep learning (LSTM).* Far too little data (one day, ~100 stops) and
   harder to explain.
-- *Tuning many hyperparameters.* With 62 test episodes, heavy tuning
+- *Tuning many hyperparameters.* With 57 test episodes, heavy tuning
   would fit the noise. Settings were fixed up front.
 
 **Questions you should be able to answer**
 
 1. Why is "will a stop start in the next 10 s?" a better target than "is this row a stop?"
 2. Why must the split be by time, and what does the 10-second purge at the split prevent?
-3. The model beats the base rate. Why is it still not ready to send alerts?
+3. The model ranks risk better than the base rate. Why is it still not ready to send alerts, and what went wrong with the first version's threshold?

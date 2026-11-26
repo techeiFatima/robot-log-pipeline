@@ -72,7 +72,8 @@ schemas, role, service user, raw table with the exact source column
 names, S3 storage integration, file format, stage) and
 [`snowflake/02_load_raw.sql`](snowflake/02_load_raw.sql) (COPY into a
 temporary table, then delete and insert per `source_file` in one
-transaction, so reloads never duplicate). The same dbt models run on
+transaction, so reloads never duplicate; the load aborts if any row
+arrives without its file name). The same dbt models run on
 both targets. The only engine-specific SQL is the timestamp parse, in
 `dbt/macros/parse_iso_utc_ts.sql` (an explicit format on Snowflake).
 
@@ -121,7 +122,9 @@ both targets. The only engine-specific SQL is the timestamp parse, in
 
 **Code:** [`databricks/src/clean_robot_logs.py`](databricks/src/clean_robot_logs.py)
 does the cleaning of `stg_robot_logs` in PySpark and runs the success test
-before writing. If it fails, the job fails and nothing is written. The
+before writing. If it fails, the job fails and nothing is written. If
+the same file was uploaded on several days, only its latest
+`ingest_date` copy is used. The
 bundle is [`databricks/databricks.yml`](databricks/databricks.yml) plus
 [`databricks/resources/clean_robot_logs.job.yml`](databricks/resources/clean_robot_logs.job.yml)
 (one serverless Python task). Databricks now calls bundles "Declarative

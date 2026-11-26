@@ -214,6 +214,7 @@ standing in for real robot logs. Times are UTC. `␠` marks a trailing space.
 | `row_num` | BIGINT | The source's "Num" column, a 1-based row counter within the file. |
 | `event_ts` | TIMESTAMP | Log time (UTC). |
 | `cycle_id` | BIGINT | The source's "cycle " column (trailing space removed). Not unique in time; see agg_stops_by_cycle. |
+| `next_stop_event_id` | VARCHAR | LOOK-AHEAD, evaluation only (never a feature): the next stop episode in this file, so warnings can be counted per episode. |
 | `stop_within_horizon` | BOOLEAN | LABEL: a new stop episode starts within the next ml_horizon_seconds (default 10 s), with no recording gap before it. |
 | `label_window_complete` | BOOLEAN | False when the label window is cut by a recording gap or the end of the file; such rows are not used for training. |
 | `current_j0` | DOUBLE | Joint 0 current, as delivered. Can be negative (meaning unconfirmed, finding 9). |

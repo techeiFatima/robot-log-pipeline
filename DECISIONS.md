@@ -185,9 +185,17 @@ each with a one-line reason. Newest phase at the bottom.
 - **No hour-of-day feature.** Reason: the stop rate rises through the day, so the clock would just encode the trend and fail on another day.
 - **Rows whose 10-second label window is cut by a gap or the end of the file are excluded.** Reason: their label is unknown, not "no stop".
 - **Time-based split: earliest 70 % of rows train, latest 30 % test, with training rows within 10 s of the split dropped.** Reason: a random split would leak neighbouring, nearly identical rows into the test set.
-- **Threshold chosen by best F1 on the last 20 % of the training period.** Reason: choosing it on the test set would inflate results.
+- **Models fit on the first 80 % of the training period; threshold (best F1) and best model chosen on the last 20 %; the same fitted model scored once on test.** Reason: choosing anything on test inflates results, and a threshold only means something for the model it was tuned on.
 - **PR-AUC as the main metric, with a 1-minute block bootstrap 95 % interval; also episode-level recall and false-alarm runs per recorded hour.** Reason: positives are rare; neighbouring rows are not independent; operators care about stops caught and alarms raised, not rows.
 - **Baselines: base rate and a "recent stop" rule; models: logistic regression and gradient-boosted trees (scikit-learn 1.9.1, fixed seeds).** Reason: a model only matters if it beats simple alternatives; two model families show whether non-linear structure helps.
 - **A test proves features never look ahead (cut the source after the compared rows, rebuild, features unchanged); it was checked by injecting a `lead()` feature, which made it fail.** Reason: leakage is the most common way to fool yourself in time-series ML. The first version of this test did not catch the injected leak; it was fixed.
-- **Result reported as "real signal, not usable yet".** Reason: PR-AUC beats the base rate with an interval above it, but ~123 false alarms per recorded hour is far too many to act on.
+- **Result reported as "real signal, not a usable warning".** Reason: PR-AUC beats the base rate with an interval above it, but the chosen threshold warns for only 10 of 57 test stops.
 - **scikit-learn added to `requirements-ml.txt`, included in `requirements-dev.txt`.** Reason: CI runs the ML tests; production installs can skip it.
+
+### Changes after an independent review of Phases 9-11 (review agent; the bot's weekly budget had run out)
+
+- **Model evaluation: the threshold is now applied to the same fitted model it was tuned on; best model and permutation importance chosen on validation, not test.** Reason: the reviewer measured that the old refit changed the share of flagged test rows from 5.4 % to 41 %, so the reported precision/recall did not match the chosen threshold.
+- **Episodes are counted by `next_stop_event_id` (a look-ahead column used only for evaluation), and alarm runs break on a time gap over 2.5 s instead of on row numbers.** Reason: a single missing row split one stop into two (62 counted, 57 real).
+- **Snowflake COPY uses `MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE`, and the load aborts if any row has no SOURCE_FILE.** Reason: the CSV header `source_file` would not match the uppercase column case-sensitively, so the file name would load as NULL and the per-file DELETE would remove nothing.
+- **The Snowflake role gets SELECT/INSERT/DELETE on current and future RAW tables.** Reason: without it, the load script and dbt fail with insufficient privileges.
+- **The Spark job keeps only the latest `ingest_date` copy of each source file.** Reason: a file uploaded on two days would otherwise be read twice; the success test would still pass because raw and clean would be equally duplicated.
