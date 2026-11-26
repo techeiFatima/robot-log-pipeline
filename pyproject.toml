@@ -1,0 +1,16 @@
+[project]
+name = "robot-log-pipeline"
+version = "0.1.0"
+description = "A data pipeline for robot system logs (UR3 CobotOps dataset as a stand-in)."
+requires-python = ">=3.13"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["dbt/target", "dbt/dbt_packages"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

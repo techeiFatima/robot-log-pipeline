@@ -1,0 +1,5 @@
+# Runtime dependencies. Pinned to exact versions so every install is identical.
+# Versions match the author's laptop (macOS, Python 3.13) where they exist there.
+duckdb==2.0.1
+pandas==3.1.1
+openpyxl==3.1.5
