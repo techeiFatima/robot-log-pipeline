@@ -110,3 +110,15 @@ each with a one-line reason. Newest phase at the bottom.
 - **The consumer's idle timer starts after the first message, with a 30 s startup grace.** Reason: a test failed once because a fresh broker's group coordinator took longer than the 5 s idle timeout (seen in testing, then fixed).
 - **CI runs the broker test against an `apache/kafka:4.4.0` service container, with `REQUIRE_KAFKA=1` so it cannot silently skip.** Reason: that checks the Docker image path on GitHub, which this build environment could not run.
 - **Disorder injection is deterministic (seeded).** Reason: tests can assert exact counts.
+
+### Changes after the code review on the Phase 7 PR (Sourcery bot)
+
+- **Offsets are committed explicitly, only up to the last fully handled message.** Reason: the bot found that a plain `commit()` after an exception could commit past the failing message, so it was skipped on restart; a new broker test reproduced this on the old code (message 50 skipped) and passes on the fix.
+- **Only fatal Kafka errors stop the consumer; others are logged and polling continues.** Reason: librdkafka recovers from transient broker errors by itself.
+- **`stream_duplicates` and `stream_rejects` are unique per (topic, partition, offset).** Reason: a redelivery after a crash must not count as a second duplicate or reject.
+- **All event times are normalised to naive UTC; `decode` rejects a non-object `payload`.** Reason: mixing aware and naive times would crash the comparison, and a bad payload must go to `stream_rejects`, not stop the consumer.
+- **The package config now includes `robot_pipeline.stream`** (`packages.find`, checked by building a wheel). Reason: a built wheel was missing the stream modules.
+- **The Docker Compose broker binds to `127.0.0.1` only.** Reason: it has no authentication or TLS.
+- **`REQUIRE_KAFKA=1` now also fails if the client library cannot be imported.** Reason: an import error must not turn into a skip.
+- **Not changed: `event_id` stays `<file name>:<Num>`.** Reason: it is the same key as the batch `log_id`, and replaying a corrected file under the same name should not double-count events; the batch path is where corrected files replace data.
+- **Not changed: one consumer per `stream.duckdb` file.** Reason: DuckDB allows one writer per file and refuses a second process at start-up with a lock error; documented in `stream/README.md`. A second consumer group needs its own `--db`.

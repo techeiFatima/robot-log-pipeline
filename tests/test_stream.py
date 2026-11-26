@@ -89,11 +89,34 @@ def test_watermark_survives_restart(tmp_path):
 
 
 def test_bad_messages_are_rejected_not_crashing(store):
+    not_object_payload = (
+        b'{"event_id":"a","robot_id":"r","source_file":"f","row_num":1,'
+        b'"event_ts":"2030-01-01T00:00:00","payload":[1]}'
+    )
     for raw in [b"not json", b"[1,2]", b'{"event_id": "x"}']:
         with pytest.raises(BadEvent):
             decode(raw)
         store.reject("bad", raw)
+    with pytest.raises(BadEvent, match="payload"):
+        decode(not_object_payload)
     assert store.summary()["rejected"] == 3
+
+
+def test_aware_and_naive_timestamps_are_compared_safely(store):
+    store.handle(make_event(1, T0))  # naive UTC 08:00:00
+    raw = row_to_event({"Num": 2, "Timestamp": "2030-01-01T08:00:05Z"}, "SYNTHETIC.xlsx")
+    raw["event_ts"] = "2030-01-01T08:00:05+02:00"  # = 06:00:05 UTC, an aware timestamp
+    # Two hours older than the watermark: late, and no naive/aware TypeError.
+    assert store.handle(decode(encode(raw))) == Outcome.LATE
+    assert parse_event_ts("2030-01-01T10:00:00+02:00") == datetime(2030, 1, 1, 8, 0, 0)
+
+
+def test_redelivered_duplicate_is_counted_once(store):
+    ev = make_event(1, T0)
+    store.handle(ev, "t", 0, 0)
+    store.handle(ev, "t", 0, 5)  # a real duplicate message at offset 5
+    store.handle(ev, "t", 0, 5)  # the same Kafka record delivered again after a crash
+    assert store.summary()["duplicates_ignored"] == 1
 
 
 def test_stop_and_unknown_status_are_counted(store):
@@ -145,8 +168,11 @@ def kafka_available(servers: str) -> bool:
 
 @pytest.mark.kafka
 def test_end_to_end_through_a_real_broker(tmp_path, sample_file):
-    pytest.importorskip("confluent_kafka")
     servers = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    if os.environ.get("REQUIRE_KAFKA"):
+        import confluent_kafka  # noqa: F401  (an import error must fail, not skip)
+    else:
+        pytest.importorskip("confluent_kafka")
     if not kafka_available(servers):
         if os.environ.get("REQUIRE_KAFKA"):
             pytest.fail(f"REQUIRE_KAFKA is set but no Kafka broker at {servers}")
@@ -180,3 +206,48 @@ def test_end_to_end_through_a_real_broker(tmp_path, sample_file):
     raw_stops = sum(1 for e in events if e["payload"]["Robot_ProtectiveStop"] == 1)
     raw.close()
     assert s["stop_events"] == raw_stops
+
+
+@pytest.mark.kafka
+def test_a_message_that_fails_is_not_skipped_after_restart(tmp_path, sample_file):
+    servers = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+    if os.environ.get("REQUIRE_KAFKA"):
+        import confluent_kafka  # noqa: F401
+    else:
+        pytest.importorskip("confluent_kafka")
+    if not kafka_available(servers):
+        if os.environ.get("REQUIRE_KAFKA"):
+            pytest.fail(f"REQUIRE_KAFKA is set but no Kafka broker at {servers}")
+        pytest.skip(f"no Kafka broker at {servers}")
+    from robot_pipeline.stream.consumer import consume
+    from robot_pipeline.stream.producer import ensure_topic, produce
+
+    topic = f"test.robot.fail.{uuid.uuid4().hex[:8]}"
+    group = f"g-{uuid.uuid4().hex[:6]}"
+    ensure_topic(servers, topic)
+    events = load_events(sample_file)[:60]
+    produce(events, servers, topic)
+    failing_id = events[49]["event_id"]
+
+    def crash_on_50th(event, outcome):
+        if event["event_id"] == failing_id:
+            raise RuntimeError("simulated crash while handling")
+
+    store = StreamStore(tmp_path / "s.duckdb")
+    with pytest.raises(RuntimeError):
+        consume(
+            store, servers, topic, group, idle_timeout=5, commit_every=10, hooks=[crash_on_50th]
+        )
+    seen = []
+    consume(
+        store,
+        servers,
+        topic,
+        group,
+        idle_timeout=5,
+        hooks=[lambda e, o: seen.append(e["event_id"])],
+    )
+    s = store.summary()
+    store.close()
+    assert failing_id in seen  # read again, not skipped
+    assert s["events_stored"] == 60

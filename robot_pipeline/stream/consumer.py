@@ -43,10 +43,17 @@ def consume(
     hooks: list[EventHook] | None = None,
     startup_timeout: float = 30.0,
 ) -> int:
-    """Read and store messages. ``idle_timeout`` counts only after the first
-    message; before that, ``startup_timeout`` allows for group coordination on a
-    freshly started broker (which can take several seconds)."""
-    from confluent_kafka import Consumer, KafkaException
+    """Read and store messages.
+
+    Offsets are committed explicitly, and only up to the last message that was
+    fully handled (stored, counted as a duplicate, or rejected). If handling a
+    message raises, its offset is never committed, so it is read again after a
+    restart instead of being skipped.
+
+    ``idle_timeout`` counts only after the first message; before that,
+    ``startup_timeout`` allows for group coordination on a fresh broker.
+    """
+    from confluent_kafka import Consumer, KafkaError, KafkaException, TopicPartition
 
     consumer = Consumer(
         {
@@ -57,10 +64,20 @@ def consume(
         }
     )
     consumer.subscribe([topic])
+    # Errors that mean "nothing to read yet", not "broken": e.g. the consumer
+    # started before the producer created the topic.
+    waiting = {KafkaError.UNKNOWN_TOPIC_OR_PART, KafkaError._PARTITION_EOF}
+    done: dict[tuple[str, int], int] = {}  # (topic, partition) -> last handled offset
     handled = 0
     uncommitted = 0
     started = time.monotonic()
     last_message: float | None = None
+
+    def commit_done() -> None:
+        if done:
+            offsets = [TopicPartition(t, p, o + 1) for (t, p), o in done.items()]
+            consumer.commit(offsets=offsets, asynchronous=False)
+
     try:
         while max_messages is None or handled < max_messages:
             msg = consumer.poll(1.0)
@@ -72,25 +89,36 @@ def consume(
                     if last_message is not None and now - last_message > idle_timeout:
                         break
                 continue
-            if msg.error():
-                raise KafkaException(msg.error())
+            err = msg.error()
+            if err:
+                if err.code() in waiting:
+                    log.info("Waiting: %s", err.str())
+                    continue
+                if err.fatal():
+                    raise KafkaException(err)
+                # Non-fatal broker/network errors: librdkafka recovers by itself.
+                log.warning("Kafka error (non-fatal, continuing): %s", err.str())
+                time.sleep(1)
+                continue
             last_message = time.monotonic()
+            where = (msg.topic(), msg.partition(), msg.offset())
             try:
                 event = decode(msg.value())
             except BadEvent as exc:
-                store.reject(str(exc), msg.value(), msg.partition(), msg.offset())
+                store.reject(str(exc), msg.value(), *where)
             else:
-                outcome = store.handle(event, msg.partition(), msg.offset())
+                outcome = store.handle(event, *where)
                 for hook in hooks or []:
                     hook(event, outcome)
+            done[(msg.topic(), msg.partition())] = msg.offset()
             handled += 1
             uncommitted += 1
             if uncommitted >= commit_every:
-                consumer.commit(asynchronous=False)
+                commit_done()
                 uncommitted = 0
     finally:
         if uncommitted:
-            consumer.commit(asynchronous=False)
+            commit_done()
         consumer.close()
     return handled
 

@@ -37,6 +37,13 @@ in the dataset.
 | **Not a valid event** | Saved in `stream_rejects` with the reason; the consumer keeps going. |
 | **Consumer crash or restart** | Offsets are committed only after the write, so a few messages may come again; the dedup makes that harmless (at-least-once delivery + idempotent store). The lateness watermark is reloaded from the table. |
 
+| **A message fails while being handled** | Its offset is never committed, so it is read again after a restart (tested). |
+| **Transient broker error** | Logged; the client reconnects by itself. Only fatal errors stop the consumer. |
+
+**One consumer per `stream.duckdb`.** DuckDB allows one writing process
+per file; a second consumer on the same file stops at start-up with a
+lock error. Give each consumer group its own `--db`.
+
 The producer can inject these problems on purpose:
 `--duplicate-rate`, `--reorder-rate`, `--late-rate`, `--late-by`
 (deterministic for a given `--seed`).
@@ -49,7 +56,8 @@ Install the Kafka client into the project venv:
 pip install -r requirements-stream.txt
 ```
 
-Start a single-node Kafka. **Option A, Docker Desktop:**
+Start a single-node Kafka. **Option A, Docker Desktop** (the port is
+bound to `127.0.0.1` because this broker has no authentication):
 
 ```bash
 docker compose -f stream/docker-compose.yml up -d

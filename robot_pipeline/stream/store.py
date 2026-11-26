@@ -41,21 +41,29 @@ CREATE TABLE IF NOT EXISTS stream_events (
     is_out_of_order   BOOLEAN NOT NULL,
     is_late           BOOLEAN NOT NULL,
     lateness_seconds  DOUBLE NOT NULL,
+    kafka_topic       VARCHAR,
     kafka_partition   INTEGER,
     kafka_offset      BIGINT
 );
+-- Audit tables are unique per Kafka record, so a redelivery after a crash
+-- (written, but offset not yet committed) is not counted twice. Rows without
+-- Kafka coordinates (tests, direct calls) have NULLs, which never conflict.
 CREATE TABLE IF NOT EXISTS stream_duplicates (
     event_id        VARCHAR NOT NULL,
     received_at     TIMESTAMPTZ NOT NULL,
+    kafka_topic     VARCHAR,
     kafka_partition INTEGER,
-    kafka_offset    BIGINT
+    kafka_offset    BIGINT,
+    UNIQUE (kafka_topic, kafka_partition, kafka_offset)
 );
 CREATE TABLE IF NOT EXISTS stream_rejects (
     received_at     TIMESTAMPTZ NOT NULL,
     reason          VARCHAR NOT NULL,
     raw_message     VARCHAR,
+    kafka_topic     VARCHAR,
     kafka_partition INTEGER,
-    kafka_offset    BIGINT
+    kafka_offset    BIGINT,
+    UNIQUE (kafka_topic, kafka_partition, kafka_offset)
 );
 """
 
@@ -91,11 +99,13 @@ class StreamStore:
     def close(self) -> None:
         self.con.close()
 
-    def reject(self, reason: str, raw: bytes | None, partition=None, offset=None) -> Outcome:
+    def reject(
+        self, reason: str, raw: bytes | None, topic=None, partition=None, offset=None
+    ) -> Outcome:
         text = raw.decode("utf-8", "replace")[:2000] if raw is not None else None
         self.con.execute(
-            "INSERT INTO stream_rejects VALUES (?, ?, ?, ?, ?)",
-            [datetime.now(UTC), reason, text, partition, offset],
+            "INSERT INTO stream_rejects VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+            [datetime.now(UTC), reason, text, topic, partition, offset],
         )
         self.stats.add(Outcome.REJECTED)
         return Outcome.REJECTED
@@ -103,6 +113,7 @@ class StreamStore:
     def handle(
         self,
         event: dict[str, Any],
+        topic: str | None = None,
         partition: int | None = None,
         offset: int | None = None,
         received_at: datetime | None = None,
@@ -116,7 +127,7 @@ class StreamStore:
         stop = event["payload"].get("Robot_ProtectiveStop")
 
         inserted = self.con.execute(
-            """INSERT INTO stream_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """INSERT INTO stream_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT (event_id) DO NOTHING RETURNING event_id""",
             [
                 event["event_id"],
@@ -131,14 +142,15 @@ class StreamStore:
                 out_of_order,
                 late,
                 lateness.total_seconds(),
+                topic,
                 partition,
                 offset,
             ],
         ).fetchall()
         if not inserted:
             self.con.execute(
-                "INSERT INTO stream_duplicates VALUES (?, ?, ?, ?)",
-                [event["event_id"], received_at, partition, offset],
+                "INSERT INTO stream_duplicates VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+                [event["event_id"], received_at, topic, partition, offset],
             )
             self.stats.add(Outcome.DUPLICATE)
             return Outcome.DUPLICATE
