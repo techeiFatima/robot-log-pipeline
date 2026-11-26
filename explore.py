@@ -1,6 +1,6 @@
 import duckdb
 
-con = duckdb.connect("cobot.duckdb")
+con = duckdb.connect("cobot.duckdb", read_only=True)
 
 queries = {
     "Rows missing the stop value, and how many still have a sensor reading": """
