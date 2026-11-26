@@ -208,3 +208,84 @@ order, and lets you document and test them. Everything lives in `dbt/`.
 1. Why does `stg_robot_logs` keep the 54 unknown rows, and how can a reader tell them apart?
 2. How does the running `sum` of `is_stop_episode_start` turn 278 stop rows into 108 episodes?
 3. Why is a cycle number not enough to identify one continuous cycle in this data?
+
+## Phase 4: checks
+
+There are three kinds of check, and each catches different problems.
+
+**1. dbt generic tests** (in the `_*.yml` files, under `data_tests:`)
+
+- `not_null` on every column that must always have a value (for example
+  `event_ts`, `stop_status`, `grip_lost`).
+- `unique` on every key (`log_id`, `stop_event_id`, `hour_utc`,
+  `cycle_id` in the cycle summary).
+- `accepted_values` on `stop_status`: only `stop`, `no_stop` or
+  `unknown`. A source value like `2` becomes `invalid` in staging, and
+  this test fails. A test proves this happens.
+
+**2. The success test, as dbt singular tests** (`dbt/tests/*.sql`). A
+singular test is a query that returns the bad rows; zero rows means pass.
+
+- `assert_every_raw_stop_is_a_clean_stop.sql` joins raw to clean on
+  `(source_file, Num)` and returns any raw stop that is not a clean stop,
+  and any clean stop that raw does not have.
+- `assert_unknown_status_rows_kept_and_counted.sql` does the same for
+  rows with no stop value: each must appear in clean as `unknown`.
+- `assert_clean_row_count_matches_raw.sql`: no row dropped or added.
+- `assert_marts_reconcile_with_clean.sql`: the summaries add up to the
+  clean table.
+
+**3. The success test, as a Python report** (`robot_pipeline/checks.py`).
+`python -m robot_pipeline.checks` runs one query that counts everything
+from the database on that run, prints this, and writes
+`state/checks/success_check_latest.json`:
+
+```
+Success test: raw_logs vs stg_robot_logs
+  rows              raw   7409   clean   7409
+  stop rows         raw    278   clean    278
+  unknown status    raw     54   clean     54   (reported separately, never dropped or guessed)
+  stops missing in clean 0, stops not in raw 0, invalid values 0
+  RESULT: PASS
+```
+
+It exits with code 1 if anything fails, so Airflow and CI can stop on it.
+
+**4. pytest unit tests** (`tests/`, 28 tests)
+
+- `tests/conftest.py`: shared fixtures that create a SYNTHETIC Excel file
+  in a temporary folder.
+- `robot_pipeline/synthetic.py`: makes a fake file with the same columns
+  and quirks as the real one (quoted timestamps, `"cycle "`, NULL stops,
+  a time gap). The workbook title and sheet name say SYNTHETIC.
+- `tests/test_loader.py`: the loader stores every value unchanged and
+  adds metadata. **Running it twice gives 120 rows, not 240.** It also
+  covers: a corrected file replaces its rows; two files stay separate; a
+  missing file or folder, renamed, dropped, added or case-changed
+  column, duplicate header, empty file and non-Excel file each fail
+  clearly; a bad value rolls back and leaves the earlier load intact.
+- `tests/test_checks.py`: builds a correct clean table, then breaks it
+  one way per test (lose a stop, invent a stop, swap a stop with a
+  non-stop so the totals still match, drop an unknown row, guess an
+  unknown row). The check must fail each time.
+- `tests/test_pipeline_integration.py`: loader → `dbt build` → check on a
+  300-row synthetic file, plus a file with an invalid stop value that
+  must make `dbt build` fail.
+
+**Alternatives rejected**
+
+- *Compare only total counts.* `test_a_swapped_stop_fails_even_when_totals_match`
+  shows why that is not enough.
+- *Hardcode 278 and 54 in the tests.* The brief forbids it, and it would
+  break on any other file. Every count is queried on each run.
+- *Great Expectations or Soda for data quality.* Capable tools, but dbt
+  tests plus one SQL comparison cover every rule here with no extra
+  framework to learn.
+- *Commit a slice of the real data as a test fixture.* That would commit
+  the dataset, which the brief forbids.
+
+**Questions you should be able to answer**
+
+1. Why does the success test join raw and clean row by row instead of comparing the two stop totals?
+2. How do the tests prove the check fails when it should, not only that it passes?
+3. What happens in `dbt build` if a new file contains `Robot_ProtectiveStop = 2`, and which test catches it?

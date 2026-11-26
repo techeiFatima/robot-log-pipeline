@@ -9,13 +9,20 @@ models:
     columns:
       - name: log_id
         description: Same key as stg_robot_logs.
+        data_tests:
+          - not_null
+          - unique
       - name: seconds_since_previous
         description: Seconds since the previous row of the same file; NULL for the first row.
       - name: is_after_gap
         description: True when seconds_since_previous exceeds the gap_threshold_seconds var (default 5).
+        data_tests:
+          - not_null
       - name: stop_event_id
         description: Identifier of the stop episode this row belongs to; NULL for non-stop rows.
       - name: is_stop_event_start
         description: True on the first row of each stop episode.
       - name: cycle_stretch_id
         description: Identifier of the contiguous run of rows sharing one cycle_id.
+        data_tests:
+          - not_null

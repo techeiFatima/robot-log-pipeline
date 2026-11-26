@@ -9,18 +9,33 @@ models:
     columns:
       - name: log_id
         description: Unique row key, "<source_file>:<row_num>".
+        data_tests:
+          - not_null
+          - unique
       - name: source_file
         description: Name of the Excel file the row was loaded from.
+        data_tests:
+          - not_null
       - name: loaded_at
         description: When the loader stored the row (UTC).
+        data_tests:
+          - not_null
       - name: row_num
         description: The source's "Num" column, a 1-based row counter within the file.
+        data_tests:
+          - not_null
       - name: timestamp_raw
         description: The source "Timestamp" text exactly as delivered, quotes included.
+        data_tests:
+          - not_null
       - name: had_stray_quotes
         description: True when timestamp_raw was wrapped in double quotes (finding 2).
+        data_tests:
+          - not_null
       - name: event_ts
         description: When the robot logged the row, as a TIMESTAMP in UTC (source values end in "Z").
+        data_tests:
+          - not_null
       - name: current_j0
         description: Joint 0 current, as delivered. Can be negative (meaning unconfirmed, finding 9).
       - name: current_j1
@@ -63,13 +78,24 @@ models:
         description: Tool (gripper) current, as delivered.
       - name: cycle_id
         description: The source's "cycle " column (trailing space removed). Not unique in time; see agg_stops_by_cycle.
+        data_tests:
+          - not_null
       - name: stop_status
         description: "'stop' (source value 1), 'no_stop' (0), 'unknown' (missing). 'invalid' would mean an unexpected value and fails a test."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['stop', 'no_stop', 'unknown']
       - name: protective_stop
         description: True/false from the source's Robot_ProtectiveStop; NULL when unknown. Never guessed.
       - name: is_status_unknown
         description: True for rows whose stop value is missing (54 rows in the UCI file).
+        data_tests:
+          - not_null
       - name: grip_lost
         description: >
           As delivered. In unknown-status rows it is always false, which may be a
           default rather than a measurement (finding 10, open question).
+        data_tests:
+          - not_null
