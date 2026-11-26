@@ -35,13 +35,23 @@ def test_steps_run_load_then_build_then_test(dag):
         "load_raw_logs",
         "dbt_build",
         "success_check",
+        "monitor",
+        "pipeline_ok",
     ]
     assert dag.get_task("dbt_build").upstream_task_ids == {"load_raw_logs"}
     assert dag.get_task("success_check").upstream_task_ids == {"dbt_build"}
 
 
+def test_monitor_always_runs_and_only_pipeline_ok_is_a_leaf(dag):
+    assert dag.get_task("monitor").trigger_rule == "all_done"
+    assert dag.get_task("pipeline_ok").upstream_task_ids == {"success_check", "monitor"}
+    assert [t.task_id for t in dag.leaves] == ["pipeline_ok"]
+
+
 def test_every_step_retries_and_reports_failure(dag):
     for task in dag.tasks:
+        if task.task_id in ("monitor", "pipeline_ok"):
+            continue
         assert task.retries == 2
         assert task.retry_delay == timedelta(minutes=5)
         assert task.on_failure_callback

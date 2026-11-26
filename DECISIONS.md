@@ -122,3 +122,31 @@ each with a one-line reason. Newest phase at the bottom.
 - **`REQUIRE_KAFKA=1` now also fails if the client library cannot be imported.** Reason: an import error must not turn into a skip.
 - **Not changed: `event_id` stays `<file name>:<Num>`.** Reason: it is the same key as the batch `log_id`, and replaying a corrected file under the same name should not double-count events; the batch path is where corrected files replace data.
 - **Not changed: one consumer per `stream.duckdb` file.** Reason: DuckDB allows one writer per file and refuses a second process at start-up with a lock error; documented in `stream/README.md`. A second consumer group needs its own `--db`.
+## Phase 8: monitoring and alerting
+
+- **Alerts always go to `state/alerts.log` (JSON lines); `ALERT_WEBHOOK_URL` adds an HTTP POST; `ALERT_WEBHOOK_FORMAT=slack` sends Slack's `{"text": ...}` shape.** Reason: the brief's default and option; JSON lines are easy to search and parse.
+- **`alerts.py` uses only the standard library, and a failing webhook is logged, never raised.** Reason: it runs from Airflow callbacks too, and alerting must never crash the pipeline it watches.
+- **Batch alerts repeat at most once per day per alert (cooldown keyed by name and date).** Reason: a daily stale-data condition should not page someone on every re-run.
+- **"Data stopped arriving" uses the last load with new or changed content, threshold 26 h.** Reason: a daily schedule plus 2 hours of slack; unchanged re-runs must not reset the clock (the Phase 6 review fix).
+- **"Row counts far below normal" is checked two ways: latest load vs the median of the last 10 loads (needs 3), and each hour vs the median hour; threshold 50 %.** Reason: with one file there is no load history yet, but hourly volume can be judged today; the median resists outliers.
+- **"Failed checks" reads the success-check report, dbt's `run_results.json` and the pipeline run status.** Reason: covers the custom success test, every dbt test, and a run that failed before the checks ran.
+- **The business alert lives in the stream consumer, not the daily batch.** Reason: a daily batch cannot alert within 5 minutes; the consumer sees each event within seconds.
+- **One business alert per stop episode: a stop with no other stop from the same robot in the previous 5 s of event time; an optional cooldown is off by default.** Reason: matches the batch gap rule without needing row order across out-of-order arrivals; nothing is suppressed unless asked.
+- **The alert records `seconds_from_sent_to_alert`, measured from the producer's `sent_at`.** Reason: the replayed `event_ts` is from 2022, so "within 5 minutes" is measured from when the simulated robot sent the event; the target is checked on every alert, not assumed.
+- **An out-of-order stop that arrives before its predecessor can raise one extra alert.** Reason: erring toward alerting is safer than missing a stop.
+- **The consumer now treats "unknown topic" as "wait", not a crash.** Reason: found in testing; a consumer started before the producer must not die.
+- **Airflow: a `monitor` task (`trigger_rule=all_done`) runs after the checks even when a step failed; an empty `pipeline_ok` task is the only leaf.** Reason: Airflow sets a run's final state from its leaf tasks; without `pipeline_ok`, a successful monitor would have marked failed runs green.
+- **Task failure callbacks send `pipeline_task_failed` through `robot_pipeline.alerts` (standard library only, imported from the project folder).** Reason: Airflow's environment needs none of the pipeline's dependencies.
+
+### Changes after the code review on the Phase 8 PR (Sourcery bot, 22 comments)
+
+- **Sent stop alerts are recorded in `stop_alerts_sent` in the stream store; a redelivered stop without a recorded alert is alerted.** Reason: a crash between storing and alerting would otherwise lose the alert, because the redelivery is a "duplicate".
+- **The stop cooldown is read from that table, so it survives restarts; tied timestamps count as one episode.** Reason: review findings; both have tests.
+- **A malformed `sent_at` no longer blocks the alert (the delay is then unknown).** Reason: losing a stop alert over a bad timing field is the wrong failure.
+- **Alert cooldown state: an exclusive file lock (`fcntl`, macOS/Linux) around check-and-record, entries expire after 7 days, the cooldown only starts when delivery worked, and stop alerts no longer use it.** Reason: concurrent senders, unbounded growth, and a failed webhook suppressing retries.
+- **Webhook: no redirects followed; a malformed URL is logged as a failed delivery; control characters stripped from the logged text.** Reason: a redirect could replay alert data elsewhere; alerting must never crash; no forged log lines.
+- **Monitor: the batch cooldown is 24 h (once per day); thresholds must be finite and positive; files of one loader run are compared as one batch; hours with zero rows count as low; duplicates and rejects count as stream activity; a missing `run_results.json` is a problem; inside Airflow the monitor ignores the previous run's status file (`--ignore-run-status`).** Reason: each was a real way to get a false OK or a false alarm.
+- **A forced reload of unchanged content is recorded as `reloaded` and does not count as new data.** Reason: `--force` must not hide "data stopped arriving".
+- **Not changed: a durable webhook outbox.** Reason: delivery stays at-least-once; a rare duplicate alert after a crash is acceptable, a missed one is not.
+- **Not changed: the episode lookup query.** Reason: it only reads a 5-second window per stop; measured 0.016 s median delay end to end.
+- **The DAG failure callback now imports `robot_pipeline.alerts` directly instead of running it as a subprocess.** Reason: opengrep flagged the subprocess call. It was not injectable (argument list, no shell), but `alerts.py` is standard-library only, so a direct import is simpler and removes the question entirely.

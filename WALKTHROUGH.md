@@ -518,8 +518,126 @@ environment). The same image runs in the CI job.
 - *Several partitions.* More throughput, but no ordering across
   partitions, and one robot doesn't need it.
 
+**Changes after code review**
+
+The Sourcery bot reviewed the Phase 7 PR. The most important find: after
+an error, the consumer's final `commit()` could commit *past* the
+message that failed, so after a restart that message was skipped. A new
+test on the real broker made the consumer crash on message 50. With the
+old code, the restarted consumer began at 51. The consumer now commits
+explicit offsets, only up to the last message it fully handled, and the
+test passes. Also fixed: only fatal Kafka errors stop the consumer;
+duplicate and reject audit rows are unique per Kafka record (a
+redelivery is not counted twice); all times are normalised to UTC; a
+non-object payload is rejected; the wheel now includes
+`robot_pipeline.stream`; the Docker broker binds to localhost only.
+Kept by design, with replies on the PR: `event_id` stays
+`<file>:<Num>`, and there is one consumer per `stream.duckdb`.
+
 **Questions you should be able to answer**
 
 1. Why is committing the offset *after* writing to DuckDB safe, even if the consumer crashes in between?
 2. What is the watermark, and how does it decide whether an event is "out of order" or "late"?
 3. Why does the stream use its own `stream.duckdb` file instead of `cobot.duckdb`?
+
+## Phase 8: monitoring and alerting
+
+**What was added**
+
+- `robot_pipeline/alerts.py`: one function, `send(alert)`. It always
+  appends the alert as a JSON line to `state/alerts.log`. If
+  `ALERT_WEBHOOK_URL` is set, it also POSTs it there (Slack format with
+  `ALERT_WEBHOOK_FORMAT=slack`). A broken webhook is recorded in the log,
+  not raised. Alerts with the same `dedup_key` inside a cooldown are not
+  repeated. It also works from the command line, which is how Airflow
+  calls it.
+- `robot_pipeline/monitor.py`: `python -m robot_pipeline.monitor` runs the
+  health checks and sends an alert for each one that fails:
+  - **data_stopped_arriving**: no new or changed data for 26 h.
+  - **row_count_low**: the latest load is under half the usual size
+    (needs 3 earlier loads to know "usual").
+  - **hourly_rows_low**: an hour has under half the rows of a normal hour.
+  - **check_failed**: the success test, a dbt test or the Airflow run failed.
+  - **stream_silent** (`--stream`): the consumer received nothing for 5 min.
+  It writes `state/monitor_latest.json` with every result.
+- `robot_pipeline/stream/stop_alerts.py`: the **business alert**. Inside
+  the Kafka consumer, when a stop row starts a new episode (no other stop
+  from that robot in the previous 5 s), it sends a critical
+  `protective_stop` alert with the time, the cycle, grip status and the
+  measured delay.
+- Airflow DAG: a `monitor` step after the checks that runs even if
+  something failed (`all_done`), and an empty `pipeline_ok` step that is
+  only green if everything passed. The run's final colour comes from its
+  last steps, so without `pipeline_ok` a successful monitor would have
+  hidden a failed load. Each failed step also sends `pipeline_task_failed`.
+- `docs/runbooks.md`: what to do for each alert.
+- `tests/test_alerts_monitoring.py`: 23 tests. Log and webhook (a real
+  local HTTP server), Slack format, broken webhook, cooldown; each monitor
+  check passing and failing, including "an unchanged re-load must not
+  hide stale data"; the business alert (one per episode, no alert for
+  duplicates or unknown rows, cooldown).
+
+**What was run here, and the real results**
+
+- `python -m robot_pipeline.monitor --stream` on the real data: 3 checks
+  OK. `hourly_rows_low` fired: 09:00 UTC has 375 rows against a median
+  of 2,270, because recording stopped ~6 minutes into that hour. (After
+  the review, empty hours count too: 10:00–13:00 with 0 rows.)
+  `stream_silent` fired because the replay had finished 10 minutes before.
+- Business alert, consumer and producer running at the same time
+  (1,500 rows at 10× speed): 8 alerts for 8 stop episodes (the batch
+  table agrees), **median 0.016 s, max 2.2 s from send to alert**, all
+  under the 5-minute target. The first alert waited for the consumer to
+  find the new topic.
+- Full file, sent first and consumed afterwards, with injected disorder:
+  100 alerts, all under 5 minutes (max 32.9 s, inflated because the
+  consumer only started after all 7,560 messages were sent). 100 = 99
+  episodes under the 5-second rule + 1 extra from a stop that arrived out
+  of order. The batch table counts 108 episodes because it splits on any
+  non-stop row, even one only a second long.
+- `airflow dags test`: success run → `success`. Run with no input files →
+  `load_raw_logs failed`; `dbt_build`, `success_check` and `pipeline_ok`
+  → `upstream_failed`; `monitor` ran; run → `failed`; a critical
+  `pipeline_task_failed` alert was written to the log.
+
+**Not run:** a real webhook service (Slack or similar). The webhook was
+tested against a local HTTP server.
+
+**Alternatives rejected**
+
+- *Prometheus + Grafana + Alertmanager.* The industry standard, but it
+  needs several running services. The checks here are written so their
+  results could be exported to it later.
+- *Airflow SLAs or email alerts only.* They cover the schedule, not data
+  problems, and can't do a 5-minute stop alert.
+- *dbt source freshness as the only "stopped arriving" check.* It is kept
+  (warn 2 days, error 3), but it reads `loaded_at`, and the monitor's
+  check is stricter (26 h) and knows about unchanged re-runs.
+- *Alert on every stop row.* 278 alerts instead of ~100; one per episode
+  is what a person needs.
+
+**Changes after code review**
+
+The review bot left 22 comments. The most important: if the consumer
+stopped after storing a stop but before alerting, the redelivered message
+counted as a duplicate and the alert was lost. Sent stop alerts are now
+recorded in `stream.duckdb` (`stop_alerts_sent`), and a redelivered stop
+without a recorded alert gets one. Other fixes, each with a test:
+- a persistent cooldown, and tied timestamps count as one episode;
+- a file lock and 7-day expiry for the cooldown state;
+- no webhook redirects, and a failed webhook doesn't start the cooldown;
+- empty hours count as low volume (the real data now shows 09:00–13:00);
+- one loader run is compared as one batch;
+- `--force` reloads are not "new data";
+- a missing dbt results file is reported;
+- thresholds that aren't finite numbers fall back to the defaults.
+Two points were answered instead of changed (see DECISIONS.md). The
+Airflow failure callback now imports the alert code directly instead of
+starting a subprocess.
+Re-measured: 8 alerts for 8 episodes, median 0.016 s, max 1.3 s.
+
+**Questions you should be able to answer**
+
+1. Why does the business alert live in the Kafka consumer instead of the daily Airflow run?
+2. Why does the DAG need the empty `pipeline_ok` task?
+3. Why would "data stopped arriving" never fire if the loader stamped a new `loaded_at` every time it re-read the same file?
