@@ -442,3 +442,84 @@ failed, `failed_task: load_raw_logs`.
 1. If `dbt_build` fails, what state do `load_raw_logs` and `success_check` end up in, and why?
 2. Why does each step call the project's `.venv` Python instead of importing the pipeline inside Airflow?
 3. What does `catchup=False` prevent when you first turn the DAG on?
+
+## Phase 7: real-time stream with Kafka
+
+**This is a simulation.** The producer replays the recorded file as if
+the robot were sending it live; nothing is connected to a real robot.
+
+Kafka is a log of messages: **producers** append messages to a
+**topic**, and **consumers** read them in order and remember how far
+they got (their **offset**).
+
+**What was added**
+
+- `robot_pipeline/stream/events.py`: the message format. One JSON
+  message per row, with `event_id = "<file>:<Num>"` as the dedup key and
+  the 24 raw columns unchanged in `payload`.
+- `robot_pipeline/stream/producer.py`: reads and validates the file (the
+  loader's `read_source`), turns each row into an event and sends it.
+  `--speed 1` waits between rows like the real timestamps (gaps capped
+  at 5 s); `--speed 0` sends as fast as possible. `simulate_disorder()`
+  can inject duplicates, swapped neighbours and late events.
+- `robot_pipeline/stream/store.py`: the rules for messy delivery, kept
+  separate from Kafka so they can be tested without a broker. See the
+  table in `stream/README.md`. The key idea is the **watermark**: the
+  newest event time seen so far. Anything older is out of order;
+  anything more than 10 s older is late. Both are kept and flagged.
+- `robot_pipeline/stream/consumer.py`: reads from Kafka, stores each
+  event, and commits the offset only after the write. If it crashes
+  between the write and the commit, the message comes again and the
+  store ignores it.
+- `stream/docker-compose.yml` and `stream/README.md`: how to run it on
+  your laptop, with or without Docker.
+- `tests/test_stream.py`: 13 tests. Duplicates, out-of-order, late,
+  restart, bad messages and a full disordered replay all run without a
+  broker. One end-to-end test uses a real broker (skipped if none is
+  running; required in CI).
+- CI job `kafka-stream-test`: starts `apache/kafka:4.4.0` as a service
+  container on GitHub and runs the broker test.
+
+**What was run here (real broker: Kafka 4.4.0, KRaft, Java 21)**
+
+The full real file was replayed with injected problems
+(`--speed 0 --duplicate-rate 0.02 --reorder-rate 0.02 --late-rate 0.01
+--late-by 30 --seed 7`):
+
+| | Count |
+|---|---|
+| Rows in the file | 7,409 |
+| Messages sent (with injected duplicates) | 7,560 |
+| Injected: duplicates / swaps / delayed | 151 / 154 / 80 |
+| Events stored | 7,409 (each `event_id` once) |
+| Duplicates ignored | 151 |
+| Stored and flagged out of order (within 10 s) / late | 151 / 80 |
+| Stop events stored / in raw | 278 / 278 |
+| Unknown-status events stored / in raw | 54 / 54 |
+
+One delayed event was 18,843 s late, because its delay crossed the
+5.2-hour recording gap. It was still kept. Restarting the consumer read
+0 new messages (offsets were committed) and changed no totals. A
+6-row real-time replay took 6.3 s, about one row per second.
+
+**Not run here:** the Docker Compose file (no Docker daemon in this
+environment). The same image runs in the CI job.
+
+**Alternatives rejected**
+
+- *Drop late events (a fixed window).* Common in streaming, but the brief
+  says never drop data. Flagging keeps the count honest.
+- *Kafka exactly-once transactions.* Correct but complex. An idempotent
+  store gives the same result here.
+- *Write stream events into `cobot.duckdb`.* DuckDB allows one writer;
+  the always-on consumer would lock out the daily batch.
+- *kafka-python client.* Pure Python and simpler to install, but
+  confluent-kafka is the more actively maintained and faster option.
+- *Several partitions.* More throughput, but no ordering across
+  partitions, and one robot doesn't need it.
+
+**Questions you should be able to answer**
+
+1. Why is committing the offset *after* writing to DuckDB safe, even if the consumer crashes in between?
+2. What is the watermark, and how does it decide whether an event is "out of order" or "late"?
+3. Why does the stream use its own `stream.duckdb` file instead of `cobot.duckdb`?

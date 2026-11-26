@@ -95,3 +95,18 @@ each with a one-line reason. Newest phase at the bottom.
 - **DAG-level callbacks write `state/pipeline_run_latest.json` (success/failed + failed task).** Reason: when an early step fails, the last success-check report is stale and could be mistaken for the latest result.
 - **Not changed: rows from a file removed from `data/raw/` stay in `raw_logs`.** Reason: raw is an archive of what arrived; deleting history because a file was moved would be the surprising behaviour. Removing a source is a deliberate manual step.
 - **Switched loader queries from `fetchone()` to a full-fetch helper.** Reason: DuckDB 2 refuses a new statement while a result is only partly read (found by the new tests).
+
+## Phase 7: real-time stream with Kafka
+
+- **Kafka 4.4.0 in KRaft mode (no ZooKeeper), run from the official Apache tarball with Java 21 in the build environment; `apache/kafka:4.4.0` for Docker.** Reason: latest release; Docker was not available here, but Java was, so a real broker could run; the checksum was verified against Apache's `.sha512`.
+- **Python client `confluent-kafka` 2.16.2, in its own `requirements-stream.txt`.** Reason: the maintained librdkafka-based client; only stream users need it.
+- **The stream replays the raw rows unchanged inside `payload`, plus `event_id`, `robot_id` and a parsed `event_ts`.** Reason: the stream is the raw source in this simulation; cleaning stays in one place (dbt).
+- **One topic `robot.logs.v1`, one partition, key = robot id.** Reason: Kafka only orders messages within a partition; one robot means one partition is enough, and `.v1` leaves room for a schema change.
+- **Producer uses `enable.idempotence=true` and `acks=all`.** Reason: Kafka itself will not write duplicates when the producer retries; the app-level duplicates are simulated on purpose.
+- **Duplicates: `event_id` primary key with `ON CONFLICT DO NOTHING`; repeats are logged in `stream_duplicates`.** Reason: stored once, still countable.
+- **Late and out-of-order events are stored and flagged, never dropped; allowed lateness 10 s.** Reason: the brief forbids losing data; 10 s is ten normal row intervals.
+- **Manual offset commits after the write (`enable.auto.commit=false`).** Reason: at-least-once delivery plus an idempotent store gives the same result as exactly-once, without Kafka transactions.
+- **The stream writes to a separate `stream.duckdb`.** Reason: DuckDB allows one writer per file; a consumer that runs all the time would block the daily batch.
+- **The consumer's idle timer starts after the first message, with a 30 s startup grace.** Reason: a test failed once because a fresh broker's group coordinator took longer than the 5 s idle timeout (seen in testing, then fixed).
+- **CI runs the broker test against an `apache/kafka:4.4.0` service container, with `REQUIRE_KAFKA=1` so it cannot silently skip.** Reason: that checks the Docker image path on GitHub, which this build environment could not run.
+- **Disorder injection is deterministic (seeded).** Reason: tests can assert exact counts.
