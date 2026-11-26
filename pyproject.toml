@@ -25,4 +25,5 @@ select = ["E", "F", "I", "B", "UP"]
 testpaths = ["tests"]
 markers = [
     "integration: end-to-end tests that run dbt (slower)",
+    "kafka: needs a running Kafka broker (skipped otherwise)",
 ]
