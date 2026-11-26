@@ -1,0 +1,22 @@
+# Databricks Declarative Automation Bundle (formerly "Asset Bundles").
+# NOT RUN: needs a Databricks workspace. See cloud/README.md.
+bundle:
+  name: robot_log_pipeline
+
+include:
+  - resources/*.yml
+
+variables:
+  staged_input:
+    description: Folder of staged CSVs written by robot_pipeline.cloud.s3
+    default: s3://<your-bucket>/staged/robot_logs/
+  output_table:
+    description: Unity Catalog table for the clean rows
+    default: robot_logs.analytics.stg_robot_logs_spark
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://<your-workspace>.cloud.databricks.com
