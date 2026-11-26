@@ -60,3 +60,14 @@ each with a one-line reason. Newest phase at the bottom.
 - **Tests use a generated SYNTHETIC file (`robot_pipeline/synthetic.py`) with the real file's quirks, never the real dataset.** Reason: tests must run anywhere, including CI, without the data, and the real data must never be committed.
 - **The check tests write a fake clean table by hand and break it in one way each.** Reason: proves the check catches each failure, not only that it passes on good data.
 - **End-to-end tests that run dbt are marked `integration`.** Reason: they are slower (~10 s), so they can be skipped during quick local runs.
+
+## Phase 5: CI
+
+- **Three parallel CI jobs: lint, pytest, and dbt build on a SYNTHETIC sample.** Reason: a failure points straight at the kind of problem.
+- **The synthetic sample is generated during the CI run (500 rows, seed 42), not committed.** Reason: no data file in Git at all; the generator is the reviewable source of truth.
+- **CI loads the sample twice before `dbt build`.** Reason: the run-twice guarantee is checked on every PR, not only in unit tests.
+- **Runs on `pull_request`, on pushes to `main`, and on manual dispatch.** Reason: the brief asks for every PR; `main` runs confirm the merged result.
+- **`permissions: contents: read` and a concurrency group that cancels superseded runs.** Reason: least privilege, and no wasted runs on rapid pushes.
+- **Actions pinned to full commit SHAs: checkout v7.0.1, setup-python v7.1.0, upload-artifact v7.0.2 (latest per their release pages, 2026-11-26), with Dependabot updating them weekly.** Reason: a review bot (Sourcery) flagged that tags can be moved; SHAs cannot.
+- **Did not turn on branch protection / required checks.** Reason: it is a repository settings change for the owner to make; it is in FINAL_REPORT.md's to-do list, and until then merges wait for green CI by hand.
+- **Added a pull request template with a review checklist.** Reason: the target role asks for code reviews; the checklist includes "no data or secrets".

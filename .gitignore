@@ -48,6 +48,7 @@ kafka_local/
 
 # --- Pipeline runtime output ---
 state/
+ci_synthetic/
 reports/*.json
 
 # --- OS / editors ---

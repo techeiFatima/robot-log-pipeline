@@ -289,3 +289,60 @@ It exits with code 1 if anything fails, so Airflow and CI can stop on it.
 1. Why does the success test join raw and clean row by row instead of comparing the two stop totals?
 2. How do the tests prove the check fails when it should, not only that it passes?
 3. What happens in `dbt build` if a new file contains `Robot_ProtectiveStop = 2`, and which test catches it?
+
+## Phase 5: CI with GitHub Actions
+
+CI (continuous integration) means every pull request is checked
+automatically on a fresh machine. GitHub only *blocks* a merge on a red
+check if the repository requires that check (Settings → Branches or
+Rules → require status checks). That setting is not on yet; until it
+is, the rule "only merge when CI is green" is followed by hand. Turning
+it on is in your to-do list in FINAL_REPORT.md.
+
+**What was added**
+
+- `.github/workflows/ci.yml`: one workflow with three jobs that run at
+  the same time on a clean Ubuntu machine with Python 3.13.
+  - **Lint**: `ruff check` (code problems) and `ruff format --check`
+    (formatting). `--output-format=github` makes errors show up as
+    comments on the exact line of the PR.
+  - **Unit and integration tests**: installs `requirements-dev.txt` and
+    runs `pytest -v` (all 28 tests, which use synthetic data).
+  - **dbt build on SYNTHETIC sample**: generates a 500-row synthetic file
+    (random values, labelled SYNTHETIC in the file name, sheet name,
+    workbook title and step names), loads it twice, runs `dbt build`
+    (models + all tests) and then the success test. The check report is
+    uploaded as a downloadable artifact of the run.
+  - The three `ROBOT_*` environment variables point the pipeline at a
+    temporary `ci_synthetic/` folder, so no code changes are needed for CI.
+- Every action is pinned to a full commit SHA (with the version in a
+  comment), not a tag like `@v7`. A tag can be moved to different code;
+  a SHA cannot. `.github/dependabot.yml` opens a weekly PR when a newer
+  version exists, so the pins don't go stale. (Suggested by the Sourcery
+  review bot on the Phase 5 PR.)
+- `.github/pull_request_template.md`: the checklist every PR description
+  starts with, including "no data, database files or secrets".
+
+**How it was verified**
+
+Before pushing, the exact CI steps were run locally in a fresh venv, on a
+clean copy of the repository (`git archive`): lint passed, 28 tests
+passed, `dbt build` PASS=37, success test PASS (500 rows; 39 stops; 8
+unknown). The real result is the green check on the Phase 5 pull request.
+
+**Alternatives rejected**
+
+- *Commit the synthetic file.* It would be a binary blob in Git that can
+  drift from the generator; generating it takes a second.
+- *Run CI on the real dataset by downloading it from UCI.* It would make
+  CI depend on an outside website, and CI should not need the real data.
+- *One job doing everything.* Slower, and a lint error would hide whether
+  the tests pass.
+- *pre-commit hooks only.* Useful locally, but they can be skipped; CI
+  cannot.
+
+**Questions you should be able to answer**
+
+1. Why does CI use a generated synthetic file instead of the real dataset?
+2. What does each of the three jobs catch that the others would not?
+3. Why does the dbt job load the sample twice?
