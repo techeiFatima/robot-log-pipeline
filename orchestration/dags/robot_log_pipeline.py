@@ -156,7 +156,7 @@ with DAG(
 
     monitor = step(
         "monitor",
-        "-m robot_pipeline.monitor",
+        "-m robot_pipeline.monitor --ignore-run-status",
         "Health checks (data stopped arriving, low row counts, failed checks); sends alerts. "
         "Runs even when an earlier step failed.",
         trigger_rule="all_done",

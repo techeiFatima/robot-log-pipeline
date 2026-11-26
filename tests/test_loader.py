@@ -76,7 +76,7 @@ def test_unchanged_file_keeps_its_original_loaded_at(sample_file, db_path):
 def test_force_reloads_an_unchanged_file_without_duplicates(sample_file, db_path):
     load_file(sample_file, db_path)
     result = load_file(sample_file, db_path, force=True)
-    assert result.action == "replaced" and result.rows_replaced == 120
+    assert result.action == "reloaded" and result.rows_replaced == 120
     assert query(db_path, "SELECT count(*) FROM raw_logs") == [(120,)]
 
 
@@ -85,7 +85,7 @@ def test_deleted_rows_are_restored_even_if_file_is_unchanged(sample_file, db_pat
     con = duckdb.connect(str(db_path))
     con.execute("DELETE FROM raw_logs WHERE Num <= 10")
     con.close()
-    assert load_file(sample_file, db_path).action == "replaced"
+    assert load_file(sample_file, db_path).action == "reloaded"
     assert query(db_path, "SELECT count(*) FROM raw_logs") == [(120,)]
 
 

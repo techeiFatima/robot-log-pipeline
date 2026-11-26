@@ -138,6 +138,18 @@ each with a one-line reason. Newest phase at the bottom.
 - **Airflow: a `monitor` task (`trigger_rule=all_done`) runs after the checks even when a step failed; an empty `pipeline_ok` task is the only leaf.** Reason: Airflow sets a run's final state from its leaf tasks; without `pipeline_ok`, a successful monitor would have marked failed runs green.
 - **Task failure callbacks send `pipeline_task_failed` through the project's own Python (`ROBOT_PYTHON -m robot_pipeline.alerts`).** Reason: Airflow's environment needs none of the pipeline's dependencies.
 
+### Changes after the code review on the Phase 8 PR (Sourcery bot, 22 comments)
+
+- **Sent stop alerts are recorded in `stop_alerts_sent` in the stream store; a redelivered stop without a recorded alert is alerted.** Reason: a crash between storing and alerting would otherwise lose the alert, because the redelivery is a "duplicate".
+- **The stop cooldown is read from that table, so it survives restarts; tied timestamps count as one episode.** Reason: review findings; both have tests.
+- **A malformed `sent_at` no longer blocks the alert (the delay is then unknown).** Reason: losing a stop alert over a bad timing field is the wrong failure.
+- **Alert cooldown state: an exclusive file lock (`fcntl`, macOS/Linux) around check-and-record, entries expire after 7 days, the cooldown only starts when delivery worked, and stop alerts no longer use it.** Reason: concurrent senders, unbounded growth, and a failed webhook suppressing retries.
+- **Webhook: no redirects followed; a malformed URL is logged as a failed delivery; control characters stripped from the logged text.** Reason: a redirect could replay alert data elsewhere; alerting must never crash; no forged log lines.
+- **Monitor: the batch cooldown is 24 h (once per day); thresholds must be finite and positive; files of one loader run are compared as one batch; hours with zero rows count as low; duplicates and rejects count as stream activity; a missing `run_results.json` is a problem; inside Airflow the monitor ignores the previous run's status file (`--ignore-run-status`).** Reason: each was a real way to get a false OK or a false alarm.
+- **A forced reload of unchanged content is recorded as `reloaded` and does not count as new data.** Reason: `--force` must not hide "data stopped arriving".
+- **Not changed: a durable webhook outbox.** Reason: delivery stays at-least-once; a rare duplicate alert after a crash is acceptable, a missed one is not.
+- **Not changed: the episode lookup query.** Reason: it only reads a 5-second window per stop; measured 0.016 s median delay end to end.
+- **Not changed: the subprocess call in the DAG callback (flagged by opengrep).** Reason: it passes an argument list with no shell, so values cannot be run as commands.
 ## Phase 9: cloud (S3, Snowflake, Databricks): NOT RUN, needs accounts
 
 - **No accounts created, no credentials entered, nothing spent; everything is marked "NOT RUN, NEEDS ACCOUNTS".** Reason: hard limit in the brief.

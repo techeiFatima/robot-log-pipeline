@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import statistics
 import sys
@@ -36,10 +37,13 @@ log = logging.getLogger(__name__)
 
 
 def _env_float(name: str, default: float) -> float:
+    """A positive, finite number from the environment, else the default.
+    (float() accepts "nan" and "inf", which would silently disable a check.)"""
     try:
-        return float(os.environ.get(name, default))
+        value = float(os.environ.get(name, default))
     except ValueError:
         return default
+    return value if math.isfinite(value) and value > 0 else default
 
 
 @dataclass
@@ -54,7 +58,7 @@ class Settings:
     max_stream_silence_minutes: float = field(
         default_factory=lambda: _env_float("ROBOT_MAX_STREAM_SILENCE_MINUTES", 5)
     )
-    cooldown_seconds: float = 6 * 3600
+    cooldown_seconds: float = 24 * 3600  # with a per-day key: at most once a day
 
 
 @dataclass
@@ -104,15 +108,18 @@ def check_data_arrival(con, now: datetime, s: Settings) -> CheckResult:
 def check_load_volume(con, s: Settings) -> CheckResult:
     if not _table_exists(con, "load_audit"):
         return CheckResult("row_count_low", True, "info", "No loads yet.")
+    # One loader run = one batch (all its files share loaded_at); compare
+    # batch totals, so files of the same batch never judge each other.
     loads = _rows(
         con,
-        "SELECT source_file, rows_loaded, loaded_at FROM load_audit "
-        "WHERE coalesce(action, 'loaded') IN ('loaded', 'replaced') ORDER BY loaded_at",
+        "SELECT string_agg(source_file, ', ' ORDER BY source_file), sum(rows_loaded), loaded_at "
+        "FROM load_audit WHERE coalesce(action, 'loaded') IN ('loaded', 'replaced') "
+        "GROUP BY loaded_at ORDER BY loaded_at",
     )
     if not loads:
         return CheckResult("row_count_low", True, "info", "No loads yet.")
     latest = loads[-1]
-    history = [r[1] for r in loads[:-1]][-10:]
+    history = [int(r[1]) for r in loads[:-1]][-10:]
     if len(history) < s.min_load_history:
         return CheckResult(
             "row_count_low",
@@ -122,7 +129,7 @@ def check_load_volume(con, s: Settings) -> CheckResult:
             {"latest_rows": latest[1]},
         )
     normal = statistics.median(history)
-    details = {"latest_file": latest[0], "latest_rows": latest[1], "normal_rows": normal}
+    details = {"latest_file": latest[0], "latest_rows": int(latest[1]), "normal_rows": normal}
     if latest[1] < s.low_volume_ratio * normal:
         return CheckResult(
             "row_count_low",
@@ -139,10 +146,19 @@ def check_hourly_volume(con, s: Settings) -> CheckResult:
     """Within the data itself: hours with far fewer rows than the median hour."""
     if not _table_exists(con, "agg_stops_by_hour"):
         return CheckResult("hourly_rows_low", True, "info", "agg_stops_by_hour not built yet.")
-    hours = _rows(con, "SELECT hour_utc, rows_total FROM agg_stops_by_hour ORDER BY hour_utc")
-    if len(hours) < 3:
+    # Every hour between the first and last hour with data, including hours
+    # with no rows at all (a full recording gap has no row in the table).
+    hours = _rows(
+        con,
+        """WITH bounds AS (SELECT min(hour_utc) lo, max(hour_utc) hi FROM agg_stops_by_hour),
+                span AS (SELECT unnest(generate_series(lo, hi, INTERVAL 1 HOUR)) AS hour_utc
+                         FROM bounds WHERE lo IS NOT NULL)
+           SELECT s.hour_utc, coalesce(a.rows_total, 0)
+           FROM span s LEFT JOIN agg_stops_by_hour a USING (hour_utc) ORDER BY 1""",
+    )
+    if sum(1 for _, n in hours if n) < 3:
         return CheckResult("hourly_rows_low", True, "info", "Fewer than 3 hours of data.")
-    normal = statistics.median(r[1] for r in hours)
+    normal = statistics.median(n for _, n in hours if n)  # "normal" = hours that have data
     low = [(h.isoformat(), n) for h, n in hours if n < s.low_volume_ratio * normal]
     details = {"normal_rows_per_hour": normal, "low_hours": low}
     if low:
@@ -157,12 +173,17 @@ def check_hourly_volume(con, s: Settings) -> CheckResult:
     return CheckResult("hourly_rows_low", True, "info", "Every hour has normal volume.", details)
 
 
-def check_failed_checks(state_dir: Path, dbt_target: Path) -> CheckResult:
+def check_failed_checks(
+    state_dir: Path, dbt_target: Path, use_run_status: bool = True
+) -> CheckResult:
+    """``use_run_status=False`` inside Airflow: the run-status file is written at
+    the *end* of a run, so during a run it describes the previous one (the
+    current run's failures are alerted by the task failure callback)."""
     problems: list[str] = []
     details: dict[str, Any] = {}
 
     run_status = state_dir / "pipeline_run_latest.json"
-    if run_status.exists():
+    if use_run_status and run_status.exists():
         run = json.loads(run_status.read_text())
         details["pipeline_run"] = run
         if run.get("status") == "failed":
@@ -189,6 +210,8 @@ def check_failed_checks(state_dir: Path, dbt_target: Path) -> CheckResult:
         details["dbt_failures"] = bad
         if bad:
             problems.append(f"{len(bad)} dbt node(s) failed: {', '.join(bad[:5])}")
+    else:
+        problems.append("no dbt results found (dbt build has not run, or ran elsewhere)")
 
     if problems:
         return CheckResult("check_failed", False, "critical", " | ".join(problems), details)
@@ -204,7 +227,14 @@ def check_stream_silence(stream_db: Path, now: datetime, s: Settings) -> CheckRe
     try:
         if not _table_exists(con, "stream_events"):
             return CheckResult("stream_silent", False, "warning", "No stream events stored yet.")
-        ((last,),) = _rows(con, "SELECT max(received_at) FROM stream_events")
+        # Any message counts as activity: new events, duplicates and rejects.
+        ((last,),) = _rows(
+            con,
+            """SELECT greatest(
+                 (SELECT max(received_at) FROM stream_events),
+                 (SELECT max(received_at) FROM stream_duplicates),
+                 (SELECT max(received_at) FROM stream_rejects))""",
+        )
     finally:
         con.close()
     if last is None:
@@ -229,6 +259,7 @@ def run_checks(
     now: datetime | None = None,
     stream_db: Path | None = None,
     settings: Settings | None = None,
+    use_run_status: bool = True,
 ) -> list[CheckResult]:
     now = now or datetime.now(UTC)
     s = settings or Settings()
@@ -249,7 +280,7 @@ def run_checks(
                 "data_stopped_arriving", False, "critical", f"Database {db_path} not found."
             )
         )
-    results.append(check_failed_checks(state_dir, dbt_target))
+    results.append(check_failed_checks(state_dir, dbt_target, use_run_status))
     if stream_db is not None:
         results.append(check_stream_silence(stream_db, now, s))
     return results
@@ -273,6 +304,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dbt-target", type=Path, default=config.PROJECT_ROOT / "dbt" / "target")
     p.add_argument("--stream", action="store_true", help="also check the stream store")
     p.add_argument("--fail-on-alert", action="store_true")
+    p.add_argument(
+        "--ignore-run-status",
+        action="store_true",
+        help="used inside Airflow, where pipeline_run_latest.json describes the previous run",
+    )
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -281,7 +317,13 @@ def main(argv: list[str] | None = None) -> int:
     now = datetime.now(UTC)
     s = Settings()
     results = run_checks(
-        args.db, args.state_dir, args.dbt_target, now, stream_db_path() if args.stream else None, s
+        args.db,
+        args.state_dir,
+        args.dbt_target,
+        now,
+        stream_db_path() if args.stream else None,
+        s,
+        use_run_status=not args.ignore_run_status,
     )
     for r in results:
         print(f"{'OK  ' if r.ok else 'FAIL'} {r.name:<22} {r.message}")

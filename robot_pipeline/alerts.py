@@ -18,9 +18,12 @@ Command line (used by the Airflow failure callback):
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import json
 import logging
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -52,7 +55,9 @@ class Alert:
             raise ValueError(f"severity must be one of {SEVERITIES}, got {self.severity!r}")
 
     def text(self) -> str:
-        return f"[{self.severity.upper()}] {self.name}: {self.message}"
+        """One-line summary. Control characters (e.g. newlines from an event's
+        fields) are replaced so they cannot forge extra log lines."""
+        return _one_line(f"[{self.severity.upper()}] {self.name}: {self.message}")
 
 
 def alert_log_path() -> Path:
@@ -60,69 +65,98 @@ def alert_log_path() -> Path:
     return Path(value) if value else config.state_dir() / "alerts.log"
 
 
+def _one_line(text: str) -> str:
+    return re.sub(r"[\x00-\x1f\x7f]", " ", text)
+
+
+STATE_TTL_SECONDS = 7 * 24 * 3600  # cooldown entries older than this are dropped
+
+
 def _state_path() -> Path:
     return alert_log_path().with_name("alert_state.json")
 
 
-def _recently_sent(key: str, cooldown_seconds: float, now: datetime) -> bool:
-    try:
-        state = json.loads(_state_path().read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
-        return False
-    sent = state.get(key)
-    return bool(sent) and (now - datetime.fromisoformat(sent)).total_seconds() < cooldown_seconds
-
-
-def _remember(key: str, now: datetime) -> None:
+@contextlib.contextmanager
+def _locked_state():
+    """Read-modify-write the cooldown state under an exclusive file lock, so two
+    processes sending the same alert at once cannot both pass the cooldown."""
     path = _state_path()
-    try:
-        state = json.loads(path.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
-        state = {}
-    state[key] = now.isoformat()
-    path.write_text(json.dumps(state, indent=2))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path.with_suffix(".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            state = json.loads(path.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            state = {}
+        yield state
+        path.write_text(json.dumps(state, indent=2))
 
 
-def _post(url: str, alert: Alert, fmt: str, timeout: float) -> str:
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow redirects: a webhook that redirects could replay the alert
+    to another (e.g. internal) address."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code, f"redirect refused: {msg}", headers, fp)
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _post(url: str, alert: Alert, fmt: str, timeout: float) -> tuple[bool, str]:
     body = {"text": alert.text()} if fmt == "slack" else {"text": alert.text(), **asdict(alert)}
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return f"sent ({resp.status})"
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with _OPENER.open(req, timeout=timeout) as resp:
+            return True, f"sent ({resp.status})"
+    except (urllib.error.URLError, ValueError, TimeoutError, OSError) as exc:
         log.error("Alert webhook failed: %s", exc)
-        return f"failed: {exc}"
+        return False, f"failed: {exc}"
 
 
 def send(alert: Alert, cooldown_seconds: float = 0.0) -> bool:
-    """Record (and maybe POST) an alert. Returns False if suppressed by cooldown."""
-    now = datetime.now(UTC)
-    if (
-        alert.dedup_key
-        and cooldown_seconds
-        and _recently_sent(alert.dedup_key, cooldown_seconds, now)
-    ):
-        log.info("Suppressed repeat alert %s (cooldown)", alert.dedup_key)
-        return False
+    """Record (and maybe POST) an alert. Returns False if suppressed by cooldown.
 
-    path = alert_log_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    record = asdict(alert)
-    url = os.environ.get("ALERT_WEBHOOK_URL")
-    if url:
-        fmt = os.environ.get("ALERT_WEBHOOK_FORMAT", "json").lower()
-        record["webhook"] = _post(url, alert, fmt, timeout=5.0)
-    else:
-        record["webhook"] = "not configured"
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record) + "\n")
-    if alert.dedup_key:
-        _remember(alert.dedup_key, now)
+    The cooldown is only started when delivery worked, so a failed webhook is
+    retried the next time the alert fires. Delivery is at-least-once: a crash
+    right after a successful POST can repeat it; a duplicate alert is safer than
+    a missing one.
+    """
+    now = datetime.now(UTC)
+    use_cooldown = bool(alert.dedup_key and cooldown_seconds)
+    with _locked_state() if use_cooldown else contextlib.nullcontext({}) as state:
+        if use_cooldown:
+            sent = state.get(alert.dedup_key)
+            if sent and (now - datetime.fromisoformat(sent)).total_seconds() < cooldown_seconds:
+                log.info("Suppressed repeat alert %s (cooldown)", alert.dedup_key)
+                return False
+
+        path = alert_log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record = asdict(alert)
+        delivered = True
+        url = os.environ.get("ALERT_WEBHOOK_URL")
+        if url:
+            fmt = os.environ.get("ALERT_WEBHOOK_FORMAT", "json").lower()
+            delivered, record["webhook"] = _post(url, alert, fmt, timeout=5.0)
+        else:
+            record["webhook"] = "not configured"
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+
+        if use_cooldown:
+            cutoff = now.timestamp() - STATE_TTL_SECONDS
+            for key in [
+                k for k, v in state.items() if datetime.fromisoformat(v).timestamp() < cutoff
+            ]:
+                del state[key]
+            if delivered:
+                state[alert.dedup_key] = now.isoformat()
     log.warning("ALERT %s", alert.text())
     return True
 
