@@ -1,0 +1,18 @@
+version: 2
+
+sources:
+  - name: raw
+    description: Tables written by the Python loader (ingest.py). Never modified by dbt.
+    schema: "{{ env_var('ROBOT_RAW_SCHEMA', 'main') }}"
+    tables:
+      - name: raw_logs
+        description: >
+          The UR3 CobotOps Excel file exactly as delivered, one row per log
+          line, plus source_file and loaded_at added by the loader.
+        loaded_at_field: loaded_at
+        config:
+          freshness:
+            warn_after: {count: 2, period: day}
+            error_after: {count: 3, period: day}
+      - name: load_audit
+        description: One row per load of one file (file, SHA-256, rows, time).

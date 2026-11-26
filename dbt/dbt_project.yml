@@ -1,0 +1,28 @@
+name: robot_logs
+version: "1.0.0"
+config-version: 2
+profile: robot_logs
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # A pause between two consecutive log rows longer than this many seconds
+  # is treated as a recording gap (rows are normally ~1.005 s apart).
+  gap_threshold_seconds: 5
+
+flags:
+  send_anonymous_usage_stats: false
+  require_generic_test_arguments_property: true
+
+models:
+  robot_logs:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: view
+    marts:
+      +materialized: table
