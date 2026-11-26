@@ -15,7 +15,8 @@ when, and under what conditions**, and be alerted when it happens.
 | Raw load and profiling (7,409 rows, 24 columns) | Done |
 | Project setup (pinned requirements, `.venv`, `.gitignore`) | Done |
 | Loader (idempotent, validated, audited) | Done |
-| dbt models, checks, CI, scheduling, streaming, monitoring, cloud, ML | Planned |
+| dbt models: clean table, stop episodes, summaries by hour and cycle | Done |
+| Checks, CI, scheduling, streaming, monitoring, cloud, ML | Planned |
 
 ## Setup (macOS or Linux, Python 3.13)
 
@@ -24,7 +25,7 @@ git clone https://github.com/techeiFatima/robot-log-pipeline.git
 cd robot-log-pipeline
 python3.13 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements-dev.txt
+pip install -r requirements-dev.txt   # also installs this package (-e .)
 ```
 
 With miniconda, `python3.13` may not be on your PATH. If so, use the
@@ -55,6 +56,16 @@ The loader stores the source values unchanged in `raw_logs`, adds
 `source_file` and `loaded_at`, and records every load in `load_audit`.
 It stops with a clear message if the file is missing, empty, or its
 columns changed.
+
+### Build the models
+
+```bash
+python -m robot_pipeline.dbt_runner build
+```
+
+This creates `stg_robot_logs` (clean rows), `fct_stop_events` (one row
+per stop episode), `agg_stops_by_hour` and `agg_stops_by_cycle` in the
+same `cobot.duckdb`.
 
 ## What profiling found
 
