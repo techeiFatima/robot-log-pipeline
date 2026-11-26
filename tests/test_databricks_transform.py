@@ -71,3 +71,17 @@ def test_unexpected_stop_value_fails_the_success_test(job, spark, tmp_path):
     raw = job.read_staged_csv(spark, staged(tmp_path, df))
     result = job.success_check(raw, job.clean(raw))
     assert not result["passed"] and result["invalid_rows"] == 1
+
+
+def test_a_file_uploaded_on_two_days_is_not_duplicated(job, spark, tmp_path):
+    from robot_pipeline.cloud.s3 import to_staged_csv
+    from robot_pipeline.synthetic import make_frame
+
+    old, new = make_frame(rows=30, seed=1), make_frame(rows=25, seed=2)
+    for day, df in [("2030-01-01", old), ("2030-01-02", new)]:
+        folder = tmp_path / "staged" / f"ingest_date={day}"
+        folder.mkdir(parents=True)
+        (folder / "SYNTHETIC.csv").write_bytes(to_staged_csv(df, "SYNTHETIC.xlsx"))
+    raw = job.read_staged_csv(spark, str(tmp_path / "staged"))
+    assert raw.count() == 25  # only the latest upload of the file
+    assert job.success_check(raw, job.clean(raw))["passed"]
