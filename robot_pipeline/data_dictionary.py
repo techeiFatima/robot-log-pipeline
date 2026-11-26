@@ -97,7 +97,7 @@ def build(db_path: Path, manifest_path: Path) -> str:
     models = sorted(
         (n for n in manifest["nodes"].values() if n["resource_type"] == "model"),
         key=lambda n: (
-            ["staging", "intermediate", "marts"].index(n["fqn"][1]) * 100 + len(n["name"])
+            ["staging", "intermediate", "marts", "ml"].index(n["fqn"][1]) * 100 + len(n["name"])
         ),
     )
     con = duckdb.connect(str(db_path), read_only=True)
