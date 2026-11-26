@@ -84,4 +84,4 @@ each with a one-line reason. Newest phase at the bottom.
 - **`on_failure_callback` on every step; it fires only after the last retry.** Reason: one clear alert per real failure, not one per attempt.
 - **`ROBOT_TASK_RETRIES` environment override.** Reason: lets a local failure test finish without waiting for retries.
 - **The DAG folder is `orchestration/`, not `airflow/`.** Reason: tested, a top-level folder named `airflow` shadows the real package (`import airflow` found the folder), which made the Airflow test run where it should have been skipped.
-- **A CI job installs Airflow and tests the DAG, with `REQUIRE_AIRFLOW=1` so a broken install fails instead of skipping.** Reason: a skipped test shows green.
+- **A CI job installs Airflow and tests the DAG, with `REQUIRE_AIRFLOW=1` so a broken install fails instead of skipping; the job runs `airflow db migrate` first.** Reason: a skipped test shows green; the first CI run failed with "no such table: dag" because a fresh Airflow home has no metadata database (reproduced locally, then fixed).
