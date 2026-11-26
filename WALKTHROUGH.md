@@ -104,7 +104,8 @@ no repeats, and timestamps never go backwards when sorted by `Num`.
 **How it was verified (on the real file)**
 
 - Two runs in a row: still 7,409 rows, 7,409 distinct `Num` values. The
-  second run reports "replaced 7409".
+  second run reported "replaced 7409". (Changed in Phase 6 after code
+  review: an unchanged file is now skipped and reported as "Unchanged".)
 - Every raw value equals what pandas reads from the Excel file (compared
   with `pandas.testing.assert_frame_equal`).
 - A missing file, a renamed column (`cycle ` → `cycle`), a dropped
@@ -408,6 +409,33 @@ in `orchestration/README.md`.
 - *A dbt-specific operator (for example Cosmos).* It shows each dbt model
   as its own Airflow task. That's useful at scale, but it adds a
   dependency for five models.
+
+**Changes after code review**
+
+The Sourcery review bot commented on the Phase 6 PR. Valid points were
+fixed, and each fix has a test:
+
+- *Stale data looked fresh:* the loader re-stamped an unchanged file with
+  a new `loaded_at` every day. It now compares the file's SHA-256 with
+  the last load and skips an identical file (`action = 'unchanged'` in
+  `load_audit`). `python ingest.py --force` reloads anyway.
+- *Half-finished multi-file loads:* all files in one run now load in a
+  single transaction, after all of them pass validation.
+- *Legacy table lost on failure:* the rebuild is now inside that
+  transaction too.
+- *Shell quoting:* configured paths are quoted with `shlex.quote`.
+- *A bad `ROBOT_TASK_RETRIES` broke the DAG import:* it now falls back to 2.
+- *An old passing report could look current:* the DAG writes
+  `state/pipeline_run_latest.json` with the run's final status.
+- *Docker or managed deployments:* documented in `orchestration/README.md`.
+
+Not changed, with a reply on the PR: rows from a removed file are kept
+(raw is an archive), and `REQUIRE_AIRFLOW=1` already fails rather than
+skips (the bot misread it; verified by running it without Airflow).
+
+Re-verified: three `airflow dags test` runs, real file. 1st: "Loaded",
+status success. 2nd: "Unchanged", success. 3rd, with no files: status
+failed, `failed_task: load_raw_logs`.
 
 **Questions you should be able to answer**
 

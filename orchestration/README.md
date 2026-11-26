@@ -53,8 +53,23 @@ admin password is printed in the terminal and saved in
 ~/.venvs/airflow/bin/airflow standalone
 ```
 
+After every run, `state/pipeline_run_latest.json` records the run's final
+status (`success` or `failed`, plus the failed task). Read it instead of
+the check report alone: when an early step fails, the success check never
+runs, so its last report would be out of date.
+
 `airflow standalone` is for development only. In production you would use
 the official Docker Compose file or a managed service (for example Amazon
 MWAA), with the same DAG file.
+
+### Deploying elsewhere (Docker, Amazon MWAA)
+
+The steps call `ROBOT_PYTHON` inside `ROBOT_PROJECT_DIR`, so the Airflow
+workers must be able to see both. In Docker, mount the repository and
+build its `.venv` inside the image (or set `ROBOT_PYTHON` to a Python that
+has `requirements.txt` installed). On a managed service, package the
+project with its dependencies into the worker environment and point the
+two variables at it. If they are wrong, every step fails with "No such
+file or directory".
 
 `orchestration/airflow_home/` is ignored by Git.
