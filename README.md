@@ -20,7 +20,8 @@ when, and under what conditions**, and be alerted when it happens.
 | dbt models: clean table, stop episodes, summaries by hour and cycle | Done |
 | Checks: dbt tests, raw-vs-clean success test, 28 pytest tests | Done |
 | CI: lint, tests and dbt build on a SYNTHETIC sample, on every pull request | Done |
-| Scheduling, streaming, monitoring, cloud, ML | Planned |
+| Scheduling: daily Airflow DAG (load → build → test) with retries | Done (run with `airflow dags test`) |
+| Streaming, monitoring, cloud, ML | Planned |
 
 ## Setup (macOS or Linux, Python 3.13)
 
@@ -78,6 +79,10 @@ python -m robot_pipeline.checks   # success test: raw vs clean, exits 1 on failu
 pytest                            # unit + integration tests on SYNTHETIC data
 pytest -m "not integration"       # quick run without dbt
 ```
+
+### Schedule it (Airflow)
+
+See [`orchestration/README.md`](orchestration/README.md).
 
 ## What profiling found
 

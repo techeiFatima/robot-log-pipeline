@@ -71,3 +71,17 @@ each with a one-line reason. Newest phase at the bottom.
 - **Actions pinned to full commit SHAs: checkout v7.0.1, setup-python v7.1.0, upload-artifact v7.0.2 (latest per their release pages, 2026-11-26), with Dependabot updating them weekly.** Reason: a review bot (Sourcery) flagged that tags can be moved; SHAs cannot.
 - **Did not turn on branch protection / required checks.** Reason: it is a repository settings change for the owner to make; it is in FINAL_REPORT.md's to-do list, and until then merges wait for green CI by hand.
 - **Added a pull request template with a review checklist.** Reason: the target role asks for code reviews; the checklist includes "no data or secrets".
+
+## Phase 6: scheduling with Airflow
+
+- **Airflow 3.4.0 (latest), installed with the official constraints file for Python 3.13.** Reason: Airflow's documented install method; 3.13 is supported since 3.1.
+- **Ran Airflow locally with `airflow dags test` in its own virtualenv, no Docker.** Reason: Docker has no daemon in the build environment, and `dags test` runs the real tasks and records real states.
+- **Each step is a `BashOperator` that calls the project's own `.venv` Python (`ROBOT_PYTHON`).** Reason: Airflow's pinned dependencies cannot clash with the pipeline's, and each step is the same command you would run by hand.
+- **Three steps, `load_raw_logs >> dbt_build >> success_check`.** Reason: "load, build, test in order"; `dbt build` already runs the dbt tests, and the success check is the final gate.
+- **`schedule="@daily"`, `catchup=False`, `max_active_runs=1`.** Reason: daily as asked; no backfill of past days on first start; two runs never write the same DuckDB file at once.
+- **2 retries, 5 minutes apart with exponential backoff, 30-minute timeout per step.** Reason: rides out short glitches without hiding a real failure for long.
+- **Retries kept even for errors that will not fix themselves (e.g. missing file).** Reason: Airflow cannot tell the two apart from an exit code; the cost is ~15 minutes before the alert.
+- **`on_failure_callback` on every step; it fires only after the last retry.** Reason: one clear alert per real failure, not one per attempt.
+- **`ROBOT_TASK_RETRIES` environment override.** Reason: lets a local failure test finish without waiting for retries.
+- **The DAG folder is `orchestration/`, not `airflow/`.** Reason: tested, a top-level folder named `airflow` shadows the real package (`import airflow` found the folder), which made the Airflow test run where it should have been skipped.
+- **A CI job installs Airflow and tests the DAG, with `REQUIRE_AIRFLOW=1` so a broken install fails instead of skipping.** Reason: a skipped test shows green.

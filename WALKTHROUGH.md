@@ -346,3 +346,71 @@ unknown). The real result is the green check on the Phase 5 pull request.
 1. Why does CI use a generated synthetic file instead of the real dataset?
 2. What does each of the three jobs catch that the others would not?
 3. Why does the dbt job load the sample twice?
+
+## Phase 6: scheduling with Airflow
+
+Airflow runs workflows on a schedule and shows each step's state. A
+workflow is a **DAG** (directed acyclic graph): steps with arrows between
+them and no loops.
+
+**What was added**
+
+- `orchestration/dags/robot_log_pipeline.py`: the DAG.
+  - Three steps: `load_raw_logs` (runs `ingest.py`), `dbt_build` (models
+    and dbt tests), `success_check` (the raw-vs-clean test). The line
+    `load >> build >> test` sets the order.
+  - `schedule="@daily"` runs it once a day at midnight UTC.
+    `catchup=False` means starting it today does not run every day since
+    `start_date`. `max_active_runs=1` stops two runs writing the same
+    database file at once.
+  - `default_args` gives every step 2 retries (5 minutes apart, then
+    longer), a 30-minute timeout and a failure callback.
+  - **Failure states:** each script exits with code 1 on a problem.
+    Airflow marks that step `failed` and the later steps
+    `upstream_failed`, so the first red box is the cause.
+  - Each step runs `cd <repo> && <repo>/.venv/bin/python ...`, so Airflow
+    and the pipeline each keep their own dependencies.
+- `orchestration/README.md`: exact steps to run it on your Mac without
+  Docker (`airflow dags test` for one run, `airflow standalone` for the
+  web UI).
+- `tests/test_airflow_dag.py`: checks the DAG imports, runs daily without
+  catch-up, has the right order, and every step has retries, a timeout and
+  a failure callback. It is skipped in the main venv (no Airflow there)
+  and runs in its own CI job.
+- `tests/conftest.py`: its imports now happen inside the fixtures, so the
+  Airflow-only test environment, which has no pandas, can load it.
+
+**How it was verified (real runs, in this build environment)**
+
+- `airflow dags test robot_log_pipeline` on the real file: the three steps
+  succeeded in order (7,409 rows loaded, dbt PASS=37, success test PASS)
+  and the run state was `success`.
+- With an empty raw folder and retries set to 0: `load_raw_logs` →
+  `failed` (message: "No .xlsx files in ..."), `dbt_build` and
+  `success_check` → `upstream_failed`, run → `failed`, and the failure
+  callback logged "task 'load_raw_logs' FAILED after 1 attempt(s)".
+- DAG structure tests: 3 passed with Airflow 3.4.0.
+
+**Not run:** the long-running scheduler and web UI (`airflow standalone`)
+were not started here, only `airflow dags test`. Steps for your laptop are
+in `orchestration/README.md`.
+
+**Alternatives rejected**
+
+- *`@task` Python functions that import the pipeline inside Airflow.* That
+  puts pandas, DuckDB and dbt in Airflow's environment, where its
+  constraints file pins other versions.
+- *The official Docker Compose setup.* Fine for production-like setups,
+  but it needs Docker (not available here) and is heavy on a laptop for a
+  three-step DAG. The DAG file works unchanged there.
+- *Cron.* Runs on schedule, but has no retries, no step states, no
+  history and no UI.
+- *A dbt-specific operator (for example Cosmos).* It shows each dbt model
+  as its own Airflow task. That's useful at scale, but it adds a
+  dependency for five models.
+
+**Questions you should be able to answer**
+
+1. If `dbt_build` fails, what state do `load_raw_logs` and `success_check` end up in, and why?
+2. Why does each step call the project's `.venv` Python instead of importing the pipeline inside Airflow?
+3. What does `catchup=False` prevent when you first turn the DAG on?
