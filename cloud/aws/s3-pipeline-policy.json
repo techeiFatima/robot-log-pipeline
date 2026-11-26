@@ -1,0 +1,21 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListRobotLogPrefixes",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::<your-bucket>",
+      "Condition": {"StringLike": {"s3:prefix": ["raw/robot_logs/*", "staged/robot_logs/*"]}}
+    },
+    {
+      "Sid": "ReadWriteRobotLogObjects",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject"],
+      "Resource": [
+        "arn:aws:s3:::<your-bucket>/raw/robot_logs/*",
+        "arn:aws:s3:::<your-bucket>/staged/robot_logs/*"
+      ]
+    }
+  ]
+}

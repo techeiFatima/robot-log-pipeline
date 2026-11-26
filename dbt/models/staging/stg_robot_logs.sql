@@ -26,7 +26,7 @@ cleaned as (
 
         "Timestamp"                                         as timestamp_raw,
         ("Timestamp" like '"%')                             as had_stray_quotes,
-        cast(replace(trim("Timestamp", '"'), 'Z', '') as {{ dbt.type_timestamp() }})
+        {{ parse_iso_utc_ts("replace(trim(\"Timestamp\", '\"'), 'Z', '')") }}
                                                             as event_ts,
 
         "Current_J0"                                        as current_j0,

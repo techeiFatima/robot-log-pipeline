@@ -641,3 +641,63 @@ Re-measured: 8 alerts for 8 episodes, median 0.016 s, max 1.3 s.
 1. Why does the business alert live in the Kafka consumer instead of the daily Airflow run?
 2. Why does the DAG need the empty `pipeline_ok` task?
 3. Why would "data stopped arriving" never fire if the loader stamped a new `loaded_at` every time it re-read the same file?
+
+## Phase 9: cloud (S3, Snowflake, Databricks)
+
+**Status: NOT RUN, NEEDS ACCOUNTS.** No accounts, credentials or money
+were used. The local DuckDB path is still the default. The full setup
+steps are in `cloud/README.md`.
+
+**What was added**
+
+- `robot_pipeline/cloud/s3.py`: `upload` validates each file, stores the
+  original under `raw/robot_logs/ingest_date=<day>/`, and stores a CSV copy
+  under `staged/...` for Snowflake. An identical file is not uploaded
+  twice. `download` brings a day's files back into `data/raw/`.
+  Credentials come from your AWS profile, never from code.
+- `cloud/aws/*.json`: least-privilege IAM policies, one for the pipeline
+  and one for Snowflake to read the staged files.
+- `dbt/profiles.yml`: a second target, `snowflake`, with key-pair auth
+  and every value from an environment variable. Select it with
+  `DBT_TARGET=snowflake`.
+- `dbt/macros/parse_iso_utc_ts.sql`: the one place where DuckDB and
+  Snowflake differ. dbt's `adapter.dispatch` picks the right version for
+  each warehouse. Everything else already used dbt's cross-database
+  macros.
+- `cloud/snowflake/01_setup.sql` and `02_load_raw.sql`: create the
+  warehouse, schemas, role, user, raw table, S3 stage, and the
+  no-duplicates load.
+- `cloud/databricks/`: a PySpark version of `stg_robot_logs` plus the
+  success test (the job fails before writing if the test fails), and the
+  bundle files to deploy it as a job.
+- Tests: `tests/test_cloud_s3.py` (7 tests, against `moto`, a fake S3)
+  and `tests/test_databricks_transform.py` (2 tests, on local Spark). Each
+  has its own CI job.
+
+**What was verified without accounts**
+
+| Part | Verified | Not verified |
+|---|---|---|
+| S3 | 7 tests against moto (layout, unchanged bytes, CSV keeps values, idempotent, invalid never uploaded, download) | A real bucket and IAM |
+| Snowflake | `dbt parse` on the Snowflake target; all 37 compiled SQL files parse in sqlglot's Snowflake dialect | `dbt compile/build` (needs a connection), the setup and load SQL |
+| Databricks | The script on local Spark 4.3.0 on the real file: success test passed; output **identical to dbt's** on 30 columns × 7,409 rows | Running in a workspace, Delta, Unity Catalog |
+
+**Alternatives rejected**
+
+- *Snowpipe for continuous loading.* Good for streaming files, but more
+  moving parts (SQS notifications) than one file a day needs.
+- *dbt-external-tables package.* Declares S3 files as dbt sources, but
+  adds a package; two short SQL scripts are easier to review.
+- *Password auth for Snowflake.* Being deprecated for single-factor
+  logins, and a password is easier to leak than a key file.
+- *Databricks notebook instead of a Python file.* Notebooks are harder to
+  test and review in Git. A plain `.py` file runs locally and in CI.
+- *Run dbt on Databricks too (dbt-databricks).* Possible, but the brief
+  asks for one transformation in Databricks, and a PySpark job shows a
+  different skill than more dbt.
+
+**Questions you should be able to answer**
+
+1. Why does the S3 layout keep both the original `.xlsx` and a CSV copy?
+2. Which single piece of SQL differs between DuckDB and Snowflake, and how does dbt choose the right version?
+3. How was the Databricks transformation checked without a Databricks workspace, and what does that check *not* prove?

@@ -10,3 +10,19 @@ robot_logs:
       type: duckdb
       path: "{{ env_var('ROBOT_DB_PATH') }}"
       threads: 4
+
+    # Snowflake warehouse (Phase 9). NOT RUN: needs a Snowflake account.
+    # Select it with DBT_TARGET=snowflake. Key-pair auth; no password is
+    # stored anywhere. See cloud/README.md for setup.
+    snowflake:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT', 'not-set') }}"
+      user: "{{ env_var('SNOWFLAKE_USER', 'not-set') }}"
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH', 'not-set') }}"
+      private_key_passphrase: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PASSPHRASE', '') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'ROBOT_TRANSFORMER') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'ROBOT_WH') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'ROBOT_LOGS') }}"
+      schema: "{{ env_var('SNOWFLAKE_SCHEMA', 'ANALYTICS') }}"
+      threads: 4
+      query_tag: robot-log-pipeline

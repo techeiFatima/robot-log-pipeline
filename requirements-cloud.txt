@@ -1,0 +1,6 @@
+# Cloud extras (Phase 9). NOT RUN against real services: needs accounts.
+-r requirements.txt
+boto3==1.44.12
+dbt-snowflake==1.12.5
+# Test-only: a local fake of S3, so the upload code is tested without AWS.
+moto[s3]==5.2.6
