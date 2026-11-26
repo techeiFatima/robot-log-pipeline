@@ -41,7 +41,7 @@ dbt/.user.yml
 logs/
 
 # --- Airflow (local standalone home) ---
-airflow/airflow_home/
+orchestration/airflow_home/
 
 # --- Kafka (local broker files) ---
 kafka_local/
