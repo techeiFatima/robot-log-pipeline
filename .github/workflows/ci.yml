@@ -82,3 +82,26 @@ jobs:
           name: synthetic-check-report
           path: ci_synthetic/state/checks/
           if-no-files-found: ignore
+
+  airflow-dag-check:
+    name: Airflow DAG check (imports, schedule, order, retries)
+    runs-on: ubuntu-latest
+    env:
+      AIRFLOW_VERSION: "3.4.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install Airflow with its official constraints file
+        run: |
+          pip install "apache-airflow==${AIRFLOW_VERSION}" \
+            --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-${AIRFLOW_VERSION}/constraints-${PYTHON_VERSION}.txt"
+          pip install pytest==9.2.0
+      - name: Test the DAG
+        env:
+          AIRFLOW_HOME: ${{ runner.temp }}/airflow_home
+          REQUIRE_AIRFLOW: "1"
+        run: |
+          airflow db migrate   # DagBag reads the metadata DB; a fresh home has none
+          pytest -v -p no:cacheprovider tests/test_airflow_dag.py

@@ -20,7 +20,8 @@ when, and under what conditions**, and be alerted when it happens.
 | dbt models: clean table, stop episodes, summaries by hour and cycle | Done |
 | Checks: dbt tests, raw-vs-clean success test, 28 pytest tests | Done |
 | CI: lint, tests and dbt build on a SYNTHETIC sample, on every pull request | Done |
-| Scheduling, streaming, monitoring, cloud, ML | Planned |
+| Scheduling: daily Airflow DAG (load → build → test) with retries | Done (run with `airflow dags test`) |
+| Streaming, monitoring, cloud, ML | Planned |
 
 ## Setup (macOS or Linux, Python 3.13)
 
@@ -52,12 +53,14 @@ unzip data/raw/ur3_cobotops.zip -d data/raw
 
 ```bash
 python ingest.py                 # loads every .xlsx in data/raw/ into cobot.duckdb
-python ingest.py                 # safe to repeat: rows are replaced, never duplicated
+python ingest.py                 # safe to repeat: unchanged files are skipped, never duplicated
 python ingest.py --file data/raw/dataset_02052023.xlsx --db cobot.duckdb
 ```
 
 The loader stores the source values unchanged in `raw_logs`, adds
 `source_file` and `loaded_at`, and records every load in `load_audit`.
+A changed file replaces its earlier rows; all files load in one
+transaction (`--force` reloads unchanged files).
 It stops with a clear message if the file is missing, empty, or its
 columns changed.
 
@@ -78,6 +81,10 @@ python -m robot_pipeline.checks   # success test: raw vs clean, exits 1 on failu
 pytest                            # unit + integration tests on SYNTHETIC data
 pytest -m "not integration"       # quick run without dbt
 ```
+
+### Schedule it (Airflow)
+
+See [`orchestration/README.md`](orchestration/README.md).
 
 ## What profiling found
 
