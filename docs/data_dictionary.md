@@ -203,6 +203,53 @@ standing in for real robot logs. Times are UTC. `␠` marks a trailing space.
 | `avg_total_abs_current` | DOUBLE | Mean of the per-row sum of absolute joint currents. |
 | `avg_tool_current` | DOUBLE | Mean tool current in the cycle. |
 
+### `ml_stop_features`
+
+*ml table.* Training data for the stop-prediction model: one row per log row that is not already a stop and has a known status. The label looks ahead; every feature uses only the current and earlier rows (tested). DuckDB only.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `log_id` | VARCHAR | Same key as stg_robot_logs. |
+| `source_file` | VARCHAR | Name of the Excel file the row was loaded from. |
+| `row_num` | BIGINT | The source's "Num" column, a 1-based row counter within the file. |
+| `event_ts` | TIMESTAMP | Log time (UTC). |
+| `cycle_id` | BIGINT | The source's "cycle " column (trailing space removed). Not unique in time; see agg_stops_by_cycle. |
+| `stop_within_horizon` | BOOLEAN | LABEL: a new stop episode starts within the next ml_horizon_seconds (default 10 s), with no recording gap before it. |
+| `label_window_complete` | BOOLEAN | False when the label window is cut by a recording gap or the end of the file; such rows are not used for training. |
+| `current_j0` | DOUBLE | Joint 0 current, as delivered. Can be negative (meaning unconfirmed, finding 9). |
+| `current_j1` | DOUBLE | Joint 1 current, as delivered. |
+| `current_j2` | DOUBLE | Joint 2 current, as delivered. |
+| `current_j3` | DOUBLE | Joint 3 current, as delivered. |
+| `current_j4` | DOUBLE | Joint 4 current, as delivered. |
+| `current_j5` | DOUBLE | Joint 5 current, as delivered. |
+| `temperature_j0` | DOUBLE | Source column "Temperature_T0", renamed to match the J1..J5 pattern. Assumed to be joint 0; this is not confirmed by the dataset authors (finding 7).
+ |
+| `temperature_j1` | DOUBLE | Joint 1 temperature, as delivered. |
+| `temperature_j2` | DOUBLE | Joint 2 temperature, as delivered. |
+| `temperature_j3` | DOUBLE | Joint 3 temperature, as delivered. |
+| `temperature_j4` | DOUBLE | Joint 4 temperature, as delivered. |
+| `temperature_j5` | DOUBLE | Joint 5 temperature, as delivered. |
+| `speed_j0` | DOUBLE | Joint 0 speed, as delivered. Can be negative (meaning unconfirmed, finding 9). |
+| `speed_j1` | DOUBLE | Joint 1 speed, as delivered. |
+| `speed_j2` | DOUBLE | Joint 2 speed, as delivered. |
+| `speed_j3` | DOUBLE | Joint 3 speed, as delivered. |
+| `speed_j4` | DOUBLE | Joint 4 speed, as delivered. |
+| `speed_j5` | DOUBLE | Joint 5 speed, as delivered. |
+| `tool_current` | DOUBLE | Tool (gripper) current, as delivered. |
+| `avg_joint_temp` | DOUBLE | Average of the six joint temperatures on this row. |
+| `total_abs_current` | DOUBLE | Sum of the absolute joint currents on this row. |
+| `total_abs_speed` | DOUBLE | Sum of the absolute joint speeds on this row. |
+| `grip_lost_now` | INTEGER | 1 if grip_lost on this row, else 0. |
+| `total_abs_current_avg10` | DOUBLE | Mean of total_abs_current over this row and the 9 before it. |
+| `total_abs_current_std10` | DOUBLE | Standard deviation of total_abs_current over this row and the 9 before it. |
+| `total_abs_speed_avg10` | DOUBLE | Mean of total_abs_speed over this row and the 9 before it. |
+| `tool_current_avg10` | DOUBLE | Mean tool current over this row and the 9 before it. |
+| `grip_lost_last10` | INTEGER | 1 if grip was lost on this row or any of the 9 before it. |
+| `avg_joint_temp_change10` | DOUBLE | avg_joint_temp now minus 10 rows earlier. |
+| `seconds_since_last_stop` | DOUBLE | Seconds since the most recent earlier stop row; NULL if none yet. |
+| `stop_episodes_last300` | HUGEINT | Stop episodes that started in the previous 300 rows (about 5 minutes). |
+| `rows_into_cycle` | BIGINT | Position of this row within its contiguous cycle stretch (1 = first row). |
+
 ## Stream tables (`stream.duckdb`, written by the Kafka consumer; simulation)
 
 | Table | One row per | Key columns |

@@ -58,7 +58,7 @@ All local storage is DuckDB: `cobot.duckdb` for the batch tables,
 | Kafka stream (simulation) | ✅ | ✅ real Kafka 4.4.0 broker, full file replayed with injected disorder; Docker image tested in CI |
 | Monitoring and alerts | ✅ | ✅ on real data; webhook tested against a local server only |
 | S3, Snowflake, Databricks | ✅ code + config | ❌ **NOT RUN, needs accounts**. S3 tested on a mock; Snowflake target parses; the PySpark job ran on local Spark and matched dbt exactly |
-| Stop-prediction model | Phase 11 | see [Prediction model](#prediction-model) |
+| Stop-prediction model | ✅ | ✅ trained and evaluated on the real file, time-based split (see [Prediction model](#prediction-model)) |
 
 ## How to run (macOS or Linux, Python 3.13)
 
@@ -193,11 +193,43 @@ Success test: raw_logs vs stg_robot_logs
 
 ## Prediction model
 
-*Added in Phase 11.*
+**Question:** from what the robot has logged so far, will a *new*
+protective stop start within the next 10 seconds? Features come from the
+dbt model `ml_stop_features` and look only backwards; a test proves no
+feature peeks at later rows. The split is **by time**: train on 08:17 to
+14:57 UTC, test on 14:57 to 15:36 UTC (2,121 rows, 0.63 h recorded,
+62 stop episodes). The decision threshold was picked on the last part of
+the training period, never on the test set. Full report:
+[`docs/model_report.md`](docs/model_report.md) (`python -m
+robot_pipeline.ml.train --write-docs`).
+
+| Approach | PR-AUC (95 % CI) | ROC-AUC | Stop episodes warned in time | False alarms per recorded hour |
+|---|---|---|---|---|
+| Base rate (no model) | 0.209 | 0.500 | 0 / 62 | 0 |
+| Rule: "a stop happened recently" | 0.157 (0.130–0.187) | 0.331 | 62 / 62, but only by warning almost all the time | 41.6 |
+| Logistic regression | 0.251 (0.212–0.297) | 0.517 | 41 / 62 | 153.4 |
+| **Gradient-boosted trees** | **0.352 (0.266–0.479)** | **0.693** | 46 / 62 | 123.1 |
+
+**Honest reading:**
+- The gradient-boosted model finds **real signal**: its PR-AUC interval
+  stays above the base rate. The strongest input is the **position within
+  the work cycle** (`rows_into_cycle`), so stops cluster at particular
+  points of a cycle. That is a concrete lead for engineers.
+- It is **not good enough to act on**: about 123 false alarms per
+  recorded hour (roughly two a minute) to catch 46 of 62 stops. The live
+  protective-stop alert, which reacts within seconds, remains the right
+  tool.
+- Training and test periods differ: 8.5 % of training rows precede a stop
+  against 20.9 % of test rows. The test covers only 38 minutes of one day
+  on one robot, and the bootstrap interval is wide. More days of data
+  would be needed before trusting any of these numbers.
+- "A stop happened recently" is *worse* than no information (ROC-AUC
+  0.33): in this data, right after a stop another one is *less* likely in
+  the next 10 seconds.
 
 ## Skills this project shows
 
-Python · SQL · dbt (models, tests, docs, cross-database macros) · DuckDB ·
+Python · SQL · machine learning (scikit-learn, time-based evaluation) · dbt (models, tests, docs, cross-database macros) · DuckDB ·
 Snowflake (second dbt target, not run) · Databricks / PySpark (run on
 local Spark, not on Databricks) · AWS S3 (boto3, tested on moto) ·
 Airflow · Kafka · Git (one PR per phase) · code review (every PR reviewed

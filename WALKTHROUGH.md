@@ -746,3 +746,73 @@ integration test builds the synthetic database and runs both generators.
 1. If someone doubts a number in the README, how can they check it in one command?
 2. Why is the data dictionary generated rather than written, and what stops it from going stale?
 3. Why does the summary call the temperature pattern a "link, not proof of a cause"?
+
+## Phase 11: a model that predicts protective stops
+
+**The question.** "Is this row a stop?" is easy and useless: during a stop
+the joint speed drops to about zero, so any model gets it right after
+the fact. The useful question is **"will a new stop start in the next
+10 seconds?"**, which is an early warning.
+
+**What was added**
+
+- `dbt/models/ml/ml_stop_features.sql`: one row per log row that is not
+  already a stop. **Label** `stop_within_horizon`: a stop episode starts
+  within 10 s and no gap comes first. It is the only column that looks
+  ahead. **Features**, looking only backwards: the current sensor
+  values; averages and spreads over the last 10 rows; temperature change
+  over 10 rows; seconds since the last stop; stops in the last 300 rows;
+  position in the current cycle. Rows whose 10-second window is cut by a
+  gap are flagged and not used. Enabled only on DuckDB.
+- `dbt/models/ml/_ml.yml`: column descriptions and tests.
+- `robot_pipeline/ml/train.py`: `python -m robot_pipeline.ml.train
+  --write-docs`. It splits by time (train on earlier, test on later),
+  drops training rows within 10 s of the split, picks the threshold on
+  the end of the training period, and compares four approaches. The
+  outputs are `state/ml/model_report.json` and `docs/model_report.md`.
+- `tests/test_ml.py`: the split never mixes time and purges the border;
+  episode and false-alarm counting; recorded hours skip gaps;
+  **features never look ahead**; training runs end to end on synthetic
+  data.
+
+**Results on the real file (test: 14:57 to 15:36 UTC, 62 stops)**
+
+| Approach | PR-AUC (95 % CI) | Stops warned in time | False alarms per recorded hour |
+|---|---|---|---|
+| Base rate | 0.209 | 0 / 62 | 0 |
+| "A stop happened recently" rule | 0.157 (0.130–0.187) | 62 / 62 (warns almost all the time) | 41.6 |
+| Logistic regression | 0.251 (0.212–0.297) | 41 / 62 | 153.4 |
+| Gradient-boosted trees | 0.352 (0.266–0.479) | 46 / 62 | 123.1 |
+
+**How to read it.** PR-AUC is the area under the precision-recall
+curve. A model that knows nothing scores the share of positive rows
+(here 0.209). The gradient-boosted trees beat that, and even the low end
+of the interval (0.266) is above it, so there is real signal. The most
+useful input is the position in the cycle: stops cluster at certain
+points of a cycle. But ~123 false alarms an hour means the model is not
+usable yet. The test period is short (38 minutes) and has a higher stop
+rate (20.9 % of rows) than training (8.5 %). The model is deterministic:
+two runs give the identical report.
+
+**A mistake that was caught.** The first version of the no-look-ahead
+test cut the data 10 rows after the compared rows, so a feature peeking
+10 rows ahead slipped through. Injecting such a feature (`lead()` instead
+of `lag()`) showed the test passing when it should fail. The cut now sits
+right after the compared rows, and the injected leak makes the test fail.
+
+**Alternatives rejected**
+
+- *Random train/test split.* Neighbouring rows are near copies, so a
+  random split leaks test information into training and inflates scores.
+- *Accuracy as the metric.* Predicting "no stop" always would score about
+  80 % on the test period and be useless.
+- *Deep learning (LSTM).* Far too little data (one day, ~100 stops) and
+  harder to explain.
+- *Tuning many hyperparameters.* With 62 test episodes, heavy tuning
+  would fit the noise. Settings were fixed up front.
+
+**Questions you should be able to answer**
+
+1. Why is "will a stop start in the next 10 s?" a better target than "is this row a stop?"
+2. Why must the split be by time, and what does the 10-second purge at the split prevent?
+3. The model beats the base rate. Why is it still not ready to send alerts?
