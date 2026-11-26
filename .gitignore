@@ -1,6 +1,56 @@
-cobot.duckdb
+# --- Data: never commit the dataset or anything derived from it ---
 data/
+*.xlsx
+*.xls
+*.csv
+*.parquet
 *.zip
-__pycache__/
-.DS_Store
+
+# --- Databases ---
+*.duckdb
+*.duckdb.wal
+*.db
+*.sqlite
+
+# --- Secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.p8
+*.key
+credentials*
+.aws/
+
+# --- Python ---
 .venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- dbt ---
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+dbt/.user.yml
+logs/
+
+# --- Airflow (local standalone home) ---
+airflow/airflow_home/
+
+# --- Kafka (local broker files) ---
+kafka_local/
+
+# --- Pipeline runtime output ---
+state/
+reports/*.json
+
+# --- OS / editors ---
+.DS_Store
+.idea/
+.vscode/
