@@ -106,6 +106,7 @@ More:
 [Data dictionary](docs/data_dictionary.md) ·
 [One-page summary for non-engineers](docs/summary_for_non_engineers.md) ·
 [Decisions](DECISIONS.md) ·
+[Final report](FINAL_REPORT.md) ·
 [Walkthrough](WALKTHROUGH.md)
 
 ## Data source

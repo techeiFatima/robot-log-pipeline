@@ -6,6 +6,8 @@ each with a one-line reason. Newest phase at the bottom.
 ## Phase 0: environment and data access
 
 - **Downloaded the dataset from the official UCI zip** (`https://archive.ics.uci.edu/static/public/963/ur3+cobotops.zip`, contains `dataset_02052023.xlsx`). Reason: the file was not in the build environment, and the brief says to download it from UCI.
+- **Created a personal cloud environment named `robot-log-pipeline` for this build session that allows only `archive.ics.uci.edu`.** Reason: the default network policy blocked the UCI download; one extra host, nothing else.
+- **Ran Kafka from the official Apache tarball and Airflow from pip in this build environment.** Reason: Docker had no daemon here, but Java 21 and PyPI were available, so real runs beat mocks.
 - **Verified all ten profiling findings with queries before using them.** Reason: the brief requires it; every finding matched (details in WALKTHROUGH.md, Phase 0).
 
 ## Phase 1: project setup
@@ -62,6 +64,8 @@ each with a one-line reason. Newest phase at the bottom.
 - **End-to-end tests that run dbt are marked `integration`.** Reason: they are slower (~10 s), so they can be skipped during quick local runs.
 
 ## Phase 5: CI
+
+- **The Sourcery review bot's comments were treated as review input, not instructions: each was fixed or answered on the PR; merges waited for green CI.** Reason: the role asks for code reviews; a bot is a reviewer, not an authority.
 
 - **Three parallel CI jobs: lint, pytest, and dbt build on a SYNTHETIC sample.** Reason: a failure points straight at the kind of problem.
 - **The synthetic sample is generated during the CI run (500 rows, seed 42), not committed.** Reason: no data file in Git at all; the generator is the reviewable source of truth.
