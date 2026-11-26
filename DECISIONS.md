@@ -137,3 +137,20 @@ each with a one-line reason. Newest phase at the bottom.
 - **The consumer now treats "unknown topic" as "wait", not a crash.** Reason: found in testing; a consumer started before the producer must not die.
 - **Airflow: a `monitor` task (`trigger_rule=all_done`) runs after the checks even when a step failed; an empty `pipeline_ok` task is the only leaf.** Reason: Airflow sets a run's final state from its leaf tasks; without `pipeline_ok`, a successful monitor would have marked failed runs green.
 - **Task failure callbacks send `pipeline_task_failed` through the project's own Python (`ROBOT_PYTHON -m robot_pipeline.alerts`).** Reason: Airflow's environment needs none of the pipeline's dependencies.
+
+## Phase 9: cloud (S3, Snowflake, Databricks): NOT RUN, needs accounts
+
+- **No accounts created, no credentials entered, nothing spent; everything is marked "NOT RUN, NEEDS ACCOUNTS".** Reason: hard limit in the brief.
+- **S3 layout `raw/robot_logs/ingest_date=YYYY-MM-DD/` (original `.xlsx`, byte-for-byte) and `staged/robot_logs/...` (CSV of the same rows plus `source_file`).** Reason: keep the untouched original; Snowflake's COPY cannot read Excel; date partitions make reloads and lifecycle rules simple.
+- **Files are validated with the loader's rules before upload; re-upload of identical content is skipped (SHA-256 in object metadata).** Reason: bad files never reach the bucket; daily re-runs cost nothing.
+- **Credentials only through boto3's default chain (SSO profile or IAM role); least-privilege policies limited to the two prefixes.** Reason: no secret ever needs to be in the repo or the environment of the code.
+- **S3 code tested with `moto` (an in-memory S3 fake), locally and in a CI job.** Reason: verifies the real boto3 calls without an account.
+- **Snowflake: key-pair auth for a `TYPE = SERVICE` user, a role scoped to the two schemas, XSMALL warehouse with 60 s auto-suspend.** Reason: dbt's docs note Snowflake is deprecating single-factor passwords; the smallest, self-pausing warehouse keeps cost minimal.
+- **Snowflake raw table uses the exact quoted source column names (including `"cycle "`), so the same dbt models run on both targets unchanged.** Reason: one set of models; the success test runs on Snowflake as dbt tests.
+- **Only one engine-specific macro: `parse_iso_utc_ts` (dispatch), with an explicit format on Snowflake.** Reason: avoids relying on Snowflake's AUTO timestamp detection.
+- **The Snowflake load copies into a temporary table, then deletes and inserts by `source_file` in one transaction.** Reason: the same no-duplicates rule as the local loader; COPY's own load history alone would let a corrected file under a new path duplicate rows.
+- **Snowflake verified only by `dbt parse` on the Snowflake target and by parsing all 37 compiled SQL files with sqlglot's Snowflake dialect.** Reason: `dbt compile` connects to Snowflake even with `--no-introspect` (tested); anything stronger needs an account.
+- **Databricks transformation = the staging cleanup plus the success test in PySpark, which fails the job before writing if the test fails.** Reason: "one transformation", and the most important one to keep identical across engines.
+- **Deployed as a Declarative Automation Bundle (formerly Asset Bundles) with one serverless Python task.** Reason: the current, code-first way to define Databricks jobs from a repo.
+- **The PySpark code was run on local Apache Spark 4.3.0 on the real file and compared with dbt's output: identical on all 30 shared columns.** Reason: proves the logic without a workspace; Databricks itself is not verified.
+- **PySpark is not in any requirements file for the main venv; CI installs it in its own job.** Reason: it is large and only needed for this one check; Databricks provides it at run time.

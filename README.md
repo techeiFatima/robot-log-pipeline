@@ -23,7 +23,8 @@ when, and under what conditions**, and be alerted when it happens.
 | Scheduling: daily Airflow DAG (load → build → test) with retries | Done (run with `airflow dags test`) |
 | Streaming: Kafka replay (simulation) with dedup, late and out-of-order handling | Done (real broker run here) |
 | Monitoring and alerting: stale data, low volume, failed checks, protective-stop alert | Done |
-| Cloud, ML | Planned |
+| Cloud: S3, Snowflake (2nd dbt target), Databricks job | Built, **NOT RUN, needs accounts** (see `cloud/README.md`) |
+| ML | Planned |
 
 ## Setup (macOS or Linux, Python 3.13)
 
@@ -83,6 +84,10 @@ python -m robot_pipeline.checks   # success test: raw vs clean, exits 1 on failu
 pytest                            # unit + integration tests on SYNTHETIC data
 pytest -m "not integration"       # quick run without dbt
 ```
+
+### Cloud (not run, needs accounts)
+
+See [`cloud/README.md`](cloud/README.md). The local DuckDB path is the default.
 
 ### Monitor it
 
