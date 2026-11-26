@@ -518,6 +518,22 @@ environment). The same image runs in the CI job.
 - *Several partitions.* More throughput, but no ordering across
   partitions, and one robot doesn't need it.
 
+**Changes after code review**
+
+The Sourcery bot reviewed the Phase 7 PR. The most important find: after
+an error, the consumer's final `commit()` could commit *past* the
+message that failed, so after a restart that message was skipped. A new
+test on the real broker made the consumer crash on message 50. With the
+old code, the restarted consumer began at 51. The consumer now commits
+explicit offsets, only up to the last message it fully handled, and the
+test passes. Also fixed: only fatal Kafka errors stop the consumer;
+duplicate and reject audit rows are unique per Kafka record (a
+redelivery is not counted twice); all times are normalised to UTC; a
+non-object payload is rejected; the wheel now includes
+`robot_pipeline.stream`; the Docker broker binds to localhost only.
+Kept by design, with replies on the PR: `event_id` stays
+`<file>:<Num>`, and there is one consumer per `stream.duckdb`.
+
 **Questions you should be able to answer**
 
 1. Why is committing the offset *after* writing to DuckDB safe, even if the consumer crashes in between?
