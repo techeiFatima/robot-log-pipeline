@@ -20,6 +20,8 @@ models:
         description: "LABEL: a new stop episode starts within the next ml_horizon_seconds (default 10 s), with no recording gap before it."
         data_tests:
           - not_null
+      - name: next_stop_event_id
+        description: "LOOK-AHEAD, evaluation only (never a feature): the next stop episode in this file, so warnings can be counted per episode."
       - name: label_window_complete
         description: False when the label window is cut by a recording gap or the end of the file; such rows are not used for training.
         data_tests:

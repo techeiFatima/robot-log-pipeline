@@ -25,6 +25,8 @@ windows as (
         *,
         -- look-ahead, for the LABEL only
         min(case when is_stop_event_start then event_ts end) over w_future as next_stop_start_ts,
+        first_value(case when is_stop_event_start then stop_event_id end ignore nulls)
+            over w_future                                                     as next_stop_event_id,
         min(case when is_after_gap then event_ts end) over w_future          as next_gap_ts,
         max(event_ts) over (partition by source_file)                        as file_last_ts,
 
@@ -59,7 +61,8 @@ select
     event_ts,
     cycle_id,
 
-    -- label
+    -- label (and, for evaluation only, which stop episode it points to)
+    next_stop_event_id,
     coalesce(
         next_stop_start_ts <= event_ts + interval '{{ h }} seconds'
         and (next_gap_ts is null or next_gap_ts > next_stop_start_ts),

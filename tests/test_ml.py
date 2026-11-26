@@ -21,6 +21,7 @@ def frame(n=100, label_every=10):
             "event_ts": [T0 + timedelta(seconds=i) for i in range(n)],
             "row_num": range(1, n + 1),
             train.LABEL: [1 if i % label_every in (7, 8, 9) else 0 for i in range(n)],
+            "next_stop_event_id": [f"stop-{i // label_every}" for i in range(n)],
         }
     )
 
@@ -39,6 +40,19 @@ def test_episode_recall_counts_episodes_not_rows():
     flagged = np.zeros(30, dtype=int)
     flagged[8] = 1  # one warning, before the second episode
     assert train.episode_recall(df, flagged) == (1, 3)
+
+
+def test_a_missing_row_does_not_split_an_episode():
+    df = frame(30).drop(index=8).reset_index(drop=True)  # e.g. an unknown-status row
+    assert train.episode_recall(df, np.zeros(len(df), dtype=int)) == (0, 3)
+
+
+def test_a_missing_row_does_not_split_an_alarm():
+    df = frame(30)
+    flagged = np.zeros(30, dtype=bool)
+    flagged[4:9] = True  # one warning run that reaches the positives at 7-8
+    df, flagged = df.drop(index=5).reset_index(drop=True), np.delete(flagged, 5)
+    assert train.false_alarm_runs(df, flagged) == 0
 
 
 def test_false_alarm_runs_count_runs_not_rows():

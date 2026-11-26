@@ -8,8 +8,10 @@ episode start within the next 10 seconds?
 * Split by TIME, never at random: the earliest 70 % of rows train, the latest
   30 % test. Training rows whose 10-second label window reaches into the test
   period are dropped (a "purge"), so no test information leaks into training.
-* The decision threshold is chosen on a validation slice (the last 20 % of the
-  training period), never on the test set.
+* Models are fit on the first 80 % of the training period; the decision
+  threshold and the "best model" are chosen on the last 20 % (validation).
+  The SAME fitted model is then scored on test, so the threshold belongs to
+  the model it is applied to. Nothing is chosen on the test set.
 * Compared against two baselines: the base rate, and a simple rule
   ("a stop happened recently, so another is likely").
 * Uncertainty: a block bootstrap (1-minute blocks) over the test period, since
@@ -63,6 +65,7 @@ FEATURES = [
 ]
 SEED = 0
 HORIZON_S = 10
+RUN_GAP_S = 2.5
 
 
 def load(db_path: Path) -> pd.DataFrame:
@@ -112,13 +115,11 @@ def best_f1_threshold(y: np.ndarray, score: np.ndarray) -> float:
 
 
 def episode_recall(test: pd.DataFrame, flagged: np.ndarray) -> tuple[int, int]:
-    """Of the stop episodes that start in the test period (and have at least one
-    eligible row in the 10 s before them), how many got a warning in time?"""
+    """Of the stop episodes preceded by at least one test row in the 10 s before
+    them, how many got a warning in time? Grouped by the episode each positive
+    row points to (next_stop_event_id), so a missing row cannot split an episode."""
     t = test.assign(flagged=flagged)
-    positives = t[t[LABEL] == 1]
-    # group the positive rows by the stop episode they precede: consecutive positive rows
-    gid = (positives["row_num"].diff() != 1).cumsum()
-    warned = positives.groupby(gid)["flagged"].max()
+    warned = t[t[LABEL] == 1].groupby("next_stop_event_id")["flagged"].max()
     return int(warned.sum()), int(len(warned))
 
 
@@ -152,8 +153,11 @@ class Result:
 def false_alarm_runs(test: pd.DataFrame, flagged: np.ndarray) -> int:
     """A person sees a run of consecutive flagged rows as ONE alarm. Count the
     runs that contain no row with a stop coming within the horizon."""
-    t = test.assign(flagged=flagged)
-    new_run = (t["flagged"] & ~t["flagged"].shift(fill_value=False)) | (t["row_num"].diff() != 1)
+    t = test.assign(flagged=np.asarray(flagged, dtype=bool))
+    # A run breaks when a row is not flagged or when more than RUN_GAP_S passes
+    # between rows (a single missing row, ~2 s, does not break a run).
+    gap = t["event_ts"].diff().dt.total_seconds().fillna(0) > RUN_GAP_S
+    new_run = (t["flagged"] & ~t["flagged"].shift(fill_value=False)) | gap
     runs = t[t["flagged"]].groupby(new_run.cumsum()[t["flagged"]])[LABEL].max()
     return int((runs == 0).sum())
 
@@ -210,19 +214,21 @@ def run(db_path: Path) -> dict:
     )
     thr = best_f1_threshold(val[LABEL].to_numpy(), rule_score(val))
     results.append(evaluate("rule_recent_stop", y_te, rule_score(test), thr, test, hours))
+    val_pr_auc = {}
     for name, model in models().items():
         model.fit(fit[FEATURES], fit[LABEL])
-        thr = best_f1_threshold(val[LABEL].to_numpy(), model.predict_proba(val[FEATURES])[:, 1])
-        model.fit(train[FEATURES], y_tr)  # refit on the whole training period
-        score = model.predict_proba(test[FEATURES])[:, 1]
+        val_score = model.predict_proba(val[FEATURES])[:, 1]
+        val_pr_auc[name] = float(average_precision_score(val[LABEL], val_score))
+        thr = best_f1_threshold(val[LABEL].to_numpy(), val_score)
+        score = model.predict_proba(test[FEATURES])[:, 1]  # same model, same threshold
         results.append(evaluate(name, y_te, score, thr, test, hours))
         fitted[name] = model
 
-    best = max((r for r in results if r.name in fitted), key=lambda r: r.pr_auc)
+    best_name = max(val_pr_auc, key=val_pr_auc.get)  # chosen on validation, not test
     imp = permutation_importance(
-        fitted[best.name],
-        test[FEATURES],
-        y_te,
+        fitted[best_name],
+        val[FEATURES],
+        val[LABEL],
         scoring="average_precision",
         n_repeats=10,
         random_state=SEED,
@@ -251,7 +257,18 @@ def run(db_path: Path) -> dict:
         },
         "split_at": str(cut),
         "results": [r.__dict__ for r in results],
-        "best_model": best.name,
+        "best_model": best_name,
+        "validation_pr_auc": {k: round(v, 4) for k, v in val_pr_auc.items()},
+        "fit": {
+            "rows": len(fit),
+            "from": str(fit["event_ts"].min()),
+            "to": str(fit["event_ts"].max()),
+        },
+        "validation": {
+            "rows": len(val),
+            "from": str(val["event_ts"].min()),
+            "to": str(val["event_ts"].max()),
+        },
         "top_features_by_permutation_importance": [
             {"feature": f, "pr_auc_drop": round(float(m), 4), "std": round(float(s), 4)}
             for f, m, s in importance
@@ -284,8 +301,8 @@ def to_markdown(r: dict) -> str:
         f"recorded), {r['test']['positives']} positive "
         f"({100 * r['test']['positive_share']:.1f} %).",
         "- Training rows whose 10-second label window reaches into the test period were "
-        "dropped. The decision threshold was chosen on the last 20 % of the training "
-        "period (best F1), never on the test set.",
+        "dropped. The decision threshold (best F1) and the best model were chosen on the "
+        "last 20 % of the training period, never on the test set.",
         "",
         "| Approach | PR-AUC (95 % CI) | ROC-AUC | Precision | Recall | Stop episodes "
         "warned in time | False alarms per recorded hour |",
@@ -304,11 +321,20 @@ def to_markdown(r: dict) -> str:
         "",
         "PR-AUC (average precision) is the main metric because positives are rare; a model "
         "with no information scores the positive share of the test set. The 95 % interval "
-        "is a block bootstrap over 1-minute blocks of the test period. A false alarm is a run "
-        "of consecutive warned rows with no stop coming within 10 s.",
+        "is a block bootstrap over 1-minute blocks of the test period. Stop episodes are "
+        "counted by the episode each warned row points to. A false alarm is a run of "
+        "consecutive warned rows (a run breaks after 2.5 s without a row) with no stop "
+        "coming within 10 s.",
+        "",
+        f"Models were fit on {r['fit']['rows']:,} rows ({r['fit']['from']} to "
+        f"{r['fit']['to']}); the threshold and the best model were chosen on "
+        f"{r['validation']['rows']:,} validation rows ({r['validation']['from']} to "
+        f"{r['validation']['to']}; validation PR-AUC: "
+        + ", ".join(f"{names[k]} {v:.3f}" for k, v in r["validation_pr_auc"].items())
+        + "). The same fitted model was then scored once on the test period.",
         "",
         f"**Most useful inputs for the best model ({names[r['best_model']]})**, by how much "
-        "test PR-AUC drops when the input is shuffled (permutation importance):",
+        "validation PR-AUC drops when the input is shuffled (permutation importance):",
         "",
         "| Input | PR-AUC drop | ± std |",
         "|---|---|---|",
