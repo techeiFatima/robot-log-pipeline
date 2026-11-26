@@ -12,12 +12,17 @@ ROBOT_ID = "ur3-cobot-01"  # a made-up id for the one robot in the dataset
 SCHEMA_VERSION = 1
 
 
+def to_naive_utc(ts: datetime) -> datetime:
+    """One convention everywhere: naive datetimes that mean UTC."""
+    return ts.astimezone(UTC).replace(tzinfo=None) if ts.tzinfo else ts
+
+
 def parse_event_ts(raw: str) -> datetime:
-    """Parse the source timestamp text (stray quotes and 'Z' allowed) as naive UTC."""
+    """Parse the source timestamp text (stray quotes, 'Z' or an offset allowed) as naive UTC."""
     text = str(raw).strip().strip('"').strip()
     if text.endswith("Z"):
-        text = text[:-1]
-    return datetime.fromisoformat(text)
+        text = text[:-1] + "+00:00"
+    return to_naive_utc(datetime.fromisoformat(text))
 
 
 def _clean(value: Any) -> Any:
@@ -66,8 +71,10 @@ def decode(raw: bytes) -> dict[str, Any]:
     missing = [f for f in REQUIRED_FIELDS if f not in event]
     if missing:
         raise BadEvent(f"missing fields: {missing}")
+    if not isinstance(event["payload"], dict):
+        raise BadEvent("payload is not a JSON object")
     try:
-        event["event_ts_parsed"] = datetime.fromisoformat(event["event_ts"])
+        event["event_ts_parsed"] = to_naive_utc(datetime.fromisoformat(event["event_ts"]))
     except (TypeError, ValueError) as exc:
         raise BadEvent(f"bad event_ts: {event.get('event_ts')!r}") from exc
     return event
