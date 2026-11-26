@@ -46,3 +46,38 @@ def test_every_step_retries_and_reports_failure(dag):
         assert task.retry_delay == timedelta(minutes=5)
         assert task.on_failure_callback
         assert task.execution_timeout == timedelta(minutes=30)
+
+
+def test_bad_retries_setting_falls_back_to_default(monkeypatch):
+    import importlib.util
+
+    monkeypatch.setenv("ROBOT_TASK_RETRIES", "not-a-number")
+    spec = importlib.util.spec_from_file_location("dag_mod", DAGS / "robot_log_pipeline.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.dag.get_task("load_raw_logs").retries == 2
+
+
+def test_paths_are_shell_quoted(monkeypatch, tmp_path):
+    import importlib.util
+
+    odd = tmp_path / "dir with $(touch pwned) space"
+    monkeypatch.setenv("ROBOT_PROJECT_DIR", str(odd))
+    spec = importlib.util.spec_from_file_location("dag_mod2", DAGS / "robot_log_pipeline.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    cmd = mod.dag.get_task("load_raw_logs").bash_command
+    assert cmd.startswith("cd '")  # single-quoted: $( ) is not evaluated
+
+
+def test_run_status_file_is_written(monkeypatch, tmp_path):
+    import importlib.util
+    import json
+
+    monkeypatch.setenv("ROBOT_STATE_DIR", str(tmp_path))
+    spec = importlib.util.spec_from_file_location("dag_mod3", DAGS / "robot_log_pipeline.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.write_run_status({"run_id": "r1"}, "failed")
+    record = json.loads((tmp_path / "pipeline_run_latest.json").read_text())
+    assert record["status"] == "failed" and record["run_id"] == "r1"

@@ -102,7 +102,9 @@ jobs:
         env:
           AIRFLOW_HOME: ${{ runner.temp }}/airflow_home
           REQUIRE_AIRFLOW: "1"
-        run: pytest -v -p no:cacheprovider tests/test_airflow_dag.py
+        run: |
+          airflow db migrate   # DagBag reads the metadata DB; a fresh home has none
+          pytest -v -p no:cacheprovider tests/test_airflow_dag.py
 
   kafka-stream-test:
     name: Kafka stream test (real broker, SYNTHETIC events)

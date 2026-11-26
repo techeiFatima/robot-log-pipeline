@@ -84,4 +84,14 @@ each with a one-line reason. Newest phase at the bottom.
 - **`on_failure_callback` on every step; it fires only after the last retry.** Reason: one clear alert per real failure, not one per attempt.
 - **`ROBOT_TASK_RETRIES` environment override.** Reason: lets a local failure test finish without waiting for retries.
 - **The DAG folder is `orchestration/`, not `airflow/`.** Reason: tested, a top-level folder named `airflow` shadows the real package (`import airflow` found the folder), which made the Airflow test run where it should have been skipped.
-- **A CI job installs Airflow and tests the DAG, with `REQUIRE_AIRFLOW=1` so a broken install fails instead of skipping.** Reason: a skipped test shows green.
+- **A CI job installs Airflow and tests the DAG, with `REQUIRE_AIRFLOW=1` so a broken install fails instead of skipping; the job runs `airflow db migrate` first.** Reason: a skipped test shows green; the first CI run failed with "no such table: dag" because a fresh Airflow home has no metadata database (reproduced locally, then fixed).
+
+### Changes after the code review on the Phase 6 PR (Sourcery bot)
+
+- **An unchanged file (same name and SHA-256, rows still present) is no longer reloaded; `load_audit.action` records `loaded`, `replaced` or `unchanged`; `--force` reloads anyway.** Reason: daily re-runs were stamping old data with a new `loaded_at`, which would hide "data stopped arriving". This replaces the Phase 2 rule "always replace".
+- **All files of one run load in one transaction, and every file is validated before the database is touched.** Reason: a bad second file must not leave the first one half-updated while dbt is skipped.
+- **The legacy-table rebuild now happens inside that transaction.** Reason: a failed load must not lose the old table.
+- **The DAG shell-quotes `ROBOT_PROJECT_DIR` and `ROBOT_PYTHON` and ignores a non-numeric `ROBOT_TASK_RETRIES`.** Reason: no shell evaluation of configured paths; a bad setting must not stop the DAG from loading.
+- **DAG-level callbacks write `state/pipeline_run_latest.json` (success/failed + failed task).** Reason: when an early step fails, the last success-check report is stale and could be mistaken for the latest result.
+- **Not changed: rows from a file removed from `data/raw/` stay in `raw_logs`.** Reason: raw is an archive of what arrived; deleting history because a file was moved would be the surprising behaviour. Removing a source is a deliberate manual step.
+- **Switched loader queries from `fetchone()` to a full-fetch helper.** Reason: DuckDB 2 refuses a new statement while a result is only partly read (found by the new tests).

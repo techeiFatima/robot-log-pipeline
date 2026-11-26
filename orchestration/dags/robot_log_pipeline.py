@@ -4,19 +4,23 @@ Each step runs one command of this project in the project's own virtualenv
 (ROBOT_PYTHON), so Airflow's dependencies never clash with the pipeline's.
 A step that exits non-zero fails; Airflow retries it, then marks it failed
 and marks the steps after it "upstream_failed", so the first red box in the
-UI is the step that broke.
+UI is the step that broke. The run's final status is also written to
+state/pipeline_run_latest.json, so an older passing check report is never
+mistaken for the latest result.
 
 Environment variables (all optional):
     ROBOT_PROJECT_DIR  repository root (default: two folders above this file)
     ROBOT_PYTHON       Python of the project's .venv (default: <root>/.venv/bin/python)
-    ROBOT_TASK_RETRIES retries per step (default: 2)
+    ROBOT_TASK_RETRIES retries per step (default: 2; ignored if not a number)
     ROBOT_RAW_DIR, ROBOT_DB_PATH, ROBOT_STATE_DIR  passed through to the pipeline
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import shlex
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -27,8 +31,41 @@ PROJECT_DIR = Path(
     os.environ.get("ROBOT_PROJECT_DIR", Path(__file__).resolve().parents[2])
 ).resolve()
 PYTHON = os.environ.get("ROBOT_PYTHON", str(PROJECT_DIR / ".venv" / "bin" / "python"))
+STATE_DIR = Path(os.environ.get("ROBOT_STATE_DIR", PROJECT_DIR / "state"))
 
 log = logging.getLogger(__name__)
+
+
+def _retries(default: int = 2) -> int:
+    """ROBOT_TASK_RETRIES, falling back to the default if unset or not a number,
+    so a bad setting cannot stop the DAG from loading."""
+    value = os.environ.get("ROBOT_TASK_RETRIES", "").strip()
+    if not value:
+        return default
+    try:
+        return max(0, int(value))
+    except ValueError:
+        log.warning("Ignoring ROBOT_TASK_RETRIES=%r (not an integer); using %d", value, default)
+        return default
+
+
+def write_run_status(context, status: str) -> None:
+    """Record the whole run's outcome, so readers never mistake an older passing
+    check report for the latest result."""
+    dag_run = context.get("dag_run")
+    ti = context.get("task_instance")
+    record = {
+        "dag_id": "robot_log_pipeline",
+        "run_id": getattr(dag_run, "run_id", context.get("run_id")),
+        "status": status,
+        "failed_task": getattr(ti, "task_id", None) if status == "failed" else None,
+        "recorded_at": datetime.now(UTC).isoformat(timespec="seconds"),
+    }
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        (STATE_DIR / "pipeline_run_latest.json").write_text(json.dumps(record, indent=2))
+    except OSError as exc:  # never let bookkeeping hide the real failure
+        log.error("Could not write pipeline run status: %s", exc)
 
 
 def report_failure(context) -> None:
@@ -44,7 +81,7 @@ def report_failure(context) -> None:
 default_args = {
     "owner": "data-eng",
     # ROBOT_TASK_RETRIES lets a local failure test run without waiting for retries.
-    "retries": int(os.environ.get("ROBOT_TASK_RETRIES", "2")),
+    "retries": _retries(),
     "retry_delay": timedelta(minutes=5),
     "retry_exponential_backoff": True,
     "execution_timeout": timedelta(minutes=30),
@@ -55,7 +92,8 @@ default_args = {
 def step(task_id: str, command: str, doc: str) -> BashOperator:
     return BashOperator(
         task_id=task_id,
-        bash_command=f'cd "{PROJECT_DIR}" && "{PYTHON}" {command}',
+        # Paths are shell-quoted so a value with spaces or $(...) is never executed.
+        bash_command=f"cd {shlex.quote(str(PROJECT_DIR))} && {shlex.quote(PYTHON)} {command}",
         append_env=True,
         doc_md=doc,
     )
@@ -71,6 +109,8 @@ with DAG(
     default_args=default_args,
     tags=["robot-logs", "duckdb", "dbt"],
     doc_md=__doc__,
+    on_success_callback=lambda ctx: write_run_status(ctx, "success"),
+    on_failure_callback=lambda ctx: write_run_status(ctx, "failed"),
 ) as dag:
     load = step(
         "load_raw_logs",
