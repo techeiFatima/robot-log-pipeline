@@ -1,0 +1,11 @@
+# Single-node Kafka (KRaft mode, no ZooKeeper) for the simulated stream.
+# The official image's default config runs one combined broker+controller
+# and advertises PLAINTEXT://localhost:9092.
+#   docker compose -f stream/docker-compose.yml up -d
+#   docker compose -f stream/docker-compose.yml down
+services:
+  kafka:
+    image: apache/kafka:4.4.0
+    container_name: robot-kafka
+    ports:
+      - "9092:9092"

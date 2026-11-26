@@ -103,3 +103,32 @@ jobs:
           AIRFLOW_HOME: ${{ runner.temp }}/airflow_home
           REQUIRE_AIRFLOW: "1"
         run: pytest -v -p no:cacheprovider tests/test_airflow_dag.py
+
+  kafka-stream-test:
+    name: Kafka stream test (real broker, SYNTHETIC events)
+    runs-on: ubuntu-latest
+    services:
+      kafka:
+        image: apache/kafka:4.4.0
+        ports:
+          - 9092:9092
+    env:
+      KAFKA_BOOTSTRAP_SERVERS: localhost:9092
+      REQUIRE_KAFKA: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-stream.txt
+      - run: pip install -r requirements-stream.txt -r requirements-dev.txt
+      - name: Wait for the broker
+        run: |
+          for i in $(seq 1 30); do
+            python -c "import socket; socket.create_connection(('localhost', 9092), 1)" && exit 0
+            sleep 2
+          done
+          echo "Kafka did not start" && exit 1
+      - name: Stream tests against the broker (must not skip)
+        run: pytest -v -m kafka -rs tests/test_stream.py
