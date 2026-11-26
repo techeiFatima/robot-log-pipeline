@@ -49,3 +49,14 @@ each with a one-line reason. Newest phase at the bottom.
 - **Cycle summary counts `cycle_stretches`.** Reason: profiling found cycle numbers 224–227 and 229–233 each appear in two separate stretches of the log, so a cycle number is not one continuous run.
 - **SQL uses dbt cross-database macros (`dbt.datediff`, `dbt.date_trunc`, `dbt.type_timestamp`) and `sum(case ...)` instead of DuckDB-only syntax.** Reason: the same models must run on Snowflake in Phase 9.
 - **Staging and intermediate models are views; marts are tables.** Reason: dbt convention; the small views always reflect the latest raw data and the marts are what people query.
+
+## Phase 4: checks
+
+- **The success test exists twice: as dbt singular tests (so `dbt build` fails) and as `python -m robot_pipeline.checks` (which prints and saves the counts as JSON).** Reason: dbt stops bad data from reaching the summaries; the Python report gives monitoring and the docs real numbers to read.
+- **Stops are matched row by row on `(source_file, Num)`, not only by comparing totals.** Reason: a test proves totals can match while a stop sits on the wrong row.
+- **The check also fails on invented stops, not only lost ones.** Reason: "every source stop appears as a stop" alone would pass a table that marks everything as a stop.
+- **Added a reconciliation test: stop events, hourly and per-cycle totals must add up to the clean table.** Reason: summaries that drift from the clean table would quietly give wrong answers.
+- **Test arguments use the `arguments:` key and the flag `require_generic_test_arguments_property: true`.** Reason: current dbt docs; avoids the deprecation warning.
+- **Tests use a generated SYNTHETIC file (`robot_pipeline/synthetic.py`) with the real file's quirks, never the real dataset.** Reason: tests must run anywhere, including CI, without the data, and the real data must never be committed.
+- **The check tests write a fake clean table by hand and break it in one way each.** Reason: proves the check catches each failure, not only that it passes on good data.
+- **End-to-end tests that run dbt are marked `integration`.** Reason: they are slower (~10 s), so they can be skipped during quick local runs.

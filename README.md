@@ -16,7 +16,8 @@ when, and under what conditions**, and be alerted when it happens.
 | Project setup (pinned requirements, `.venv`, `.gitignore`) | Done |
 | Loader (idempotent, validated, audited) | Done |
 | dbt models: clean table, stop episodes, summaries by hour and cycle | Done |
-| Checks, CI, scheduling, streaming, monitoring, cloud, ML | Planned |
+| Checks: dbt tests, raw-vs-clean success test, 28 pytest tests | Done |
+| CI, CI, scheduling, streaming, monitoring, cloud, ML | Planned |
 
 ## Setup (macOS or Linux, Python 3.13)
 
@@ -66,6 +67,14 @@ python -m robot_pipeline.dbt_runner build
 This creates `stg_robot_logs` (clean rows), `fct_stop_events` (one row
 per stop episode), `agg_stops_by_hour` and `agg_stops_by_cycle` in the
 same `cobot.duckdb`.
+
+### Check it
+
+```bash
+python -m robot_pipeline.checks   # success test: raw vs clean, exits 1 on failure
+pytest                            # unit + integration tests on SYNTHETIC data
+pytest -m "not integration"       # quick run without dbt
+```
 
 ## What profiling found
 
