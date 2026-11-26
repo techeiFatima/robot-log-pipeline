@@ -1,4 +1,4 @@
-"""Daily robot log pipeline: load -> build -> test.
+"""Daily robot log pipeline: load -> build -> test -> monitor.
 
 Each step runs one command of this project in the project's own virtualenv
 (ROBOT_PYTHON), so Airflow's dependencies never clash with the pipeline's.
@@ -21,10 +21,12 @@ import json
 import logging
 import os
 import shlex
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from airflow.providers.standard.operators.bash import BashOperator
+from airflow.providers.standard.operators.empty import EmptyOperator
 from airflow.sdk import DAG
 
 PROJECT_DIR = Path(
@@ -76,6 +78,29 @@ def report_failure(context) -> None:
         f"for run {context.get('run_id')}. Logs: {getattr(ti, 'log_url', 'see Airflow UI')}"
     )
     log.error(message)
+    # Send it through the project's alerting (log file + optional webhook), in
+    # the project's own Python so Airflow needs none of its dependencies.
+    try:
+        subprocess.run(
+            [
+                PYTHON,
+                "-m",
+                "robot_pipeline.alerts",
+                "--name",
+                "pipeline_task_failed",
+                "--severity",
+                "critical",
+                "--message",
+                message,
+                "--dedup-key",
+                f"{context.get('run_id')}:{ti.task_id}",
+            ],
+            cwd=PROJECT_DIR,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.error("Could not send the failure alert: %s", exc)
 
 
 default_args = {
@@ -89,9 +114,10 @@ default_args = {
 }
 
 
-def step(task_id: str, command: str, doc: str) -> BashOperator:
+def step(task_id: str, command: str, doc: str, **kwargs) -> BashOperator:
     return BashOperator(
         task_id=task_id,
+        **kwargs,
         # Paths are shell-quoted so a value with spaces or $(...) is never executed.
         bash_command=f"cd {shlex.quote(str(PROJECT_DIR))} && {shlex.quote(PYTHON)} {command}",
         append_env=True,
@@ -128,4 +154,18 @@ with DAG(
         "Raw-vs-clean success test: every source stop is a clean stop, unknowns counted.",
     )
 
-    load >> build >> test
+    monitor = step(
+        "monitor",
+        "-m robot_pipeline.monitor",
+        "Health checks (data stopped arriving, low row counts, failed checks); sends alerts. "
+        "Runs even when an earlier step failed.",
+        trigger_rule="all_done",
+        retries=0,
+    )
+    # The run's final state comes from its leaf tasks. pipeline_ok is the only
+    # leaf and needs every step to succeed, so a failed step always fails the
+    # run, while monitor (all_done) still runs and alerts.
+    pipeline_ok = EmptyOperator(task_id="pipeline_ok", doc_md="Green only if every step passed.")
+
+    load >> build >> test >> monitor
+    [test, monitor] >> pipeline_ok
