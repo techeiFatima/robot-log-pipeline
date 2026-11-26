@@ -68,5 +68,6 @@ each with a one-line reason. Newest phase at the bottom.
 - **CI loads the sample twice before `dbt build`.** Reason: the run-twice guarantee is checked on every PR, not only in unit tests.
 - **Runs on `pull_request`, on pushes to `main`, and on manual dispatch.** Reason: the brief asks for every PR; `main` runs confirm the merged result.
 - **`permissions: contents: read` and a concurrency group that cancels superseded runs.** Reason: least privilege, and no wasted runs on rapid pushes.
-- **Action versions `actions/checkout@v7`, `actions/setup-python@v7`, `actions/upload-artifact@v7`.** Reason: current major versions per their GitHub release pages (checked 2026-11-26).
+- **Actions pinned to full commit SHAs: checkout v7.0.1, setup-python v7.1.0, upload-artifact v7.0.2 (latest per their release pages, 2026-11-26), with Dependabot updating them weekly.** Reason: a review bot (Sourcery) flagged that tags can be moved; SHAs cannot.
+- **Did not turn on branch protection / required checks.** Reason: it is a repository settings change for the owner to make; it is in FINAL_REPORT.md's to-do list, and until then merges wait for green CI by hand.
 - **Added a pull request template with a review checklist.** Reason: the target role asks for code reviews; the checklist includes "no data or secrets".

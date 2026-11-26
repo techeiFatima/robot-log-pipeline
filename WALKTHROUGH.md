@@ -293,7 +293,11 @@ It exits with code 1 if anything fails, so Airflow and CI can stop on it.
 ## Phase 5: CI with GitHub Actions
 
 CI (continuous integration) means every pull request is checked
-automatically on a fresh machine before it can be merged.
+automatically on a fresh machine. GitHub only *blocks* a merge on a red
+check if the repository requires that check (Settings → Branches or
+Rules → require status checks). That setting is not on yet; until it
+is, the rule "only merge when CI is green" is followed by hand. Turning
+it on is in your to-do list in FINAL_REPORT.md.
 
 **What was added**
 
@@ -311,6 +315,11 @@ automatically on a fresh machine before it can be merged.
     uploaded as a downloadable artifact of the run.
   - The three `ROBOT_*` environment variables point the pipeline at a
     temporary `ci_synthetic/` folder, so no code changes are needed for CI.
+- Every action is pinned to a full commit SHA (with the version in a
+  comment), not a tag like `@v7`. A tag can be moved to different code;
+  a SHA cannot. `.github/dependabot.yml` opens a weekly PR when a newer
+  version exists, so the pins don't go stale. (Suggested by the Sourcery
+  review bot on the Phase 5 PR.)
 - `.github/pull_request_template.md`: the checklist every PR description
   starts with, including "no data, database files or secrets".
 
