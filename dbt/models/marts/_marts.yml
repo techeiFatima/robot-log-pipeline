@@ -33,6 +33,10 @@ models:
         description: ended_at minus started_at; 0 for a one-row episode.
         data_tests:
           - not_null
+      - name: first_row_num
+        description: row_num of the first stop row.
+      - name: last_row_num
+        description: row_num of the last stop row.
       - name: grip_lost_during_stop
         description: True if any row in the episode had grip_lost.
       - name: avg_joint_temperature
@@ -72,6 +76,10 @@ models:
         description: Rows with grip_lost = true.
       - name: cycles_seen
         description: Distinct cycle numbers in the hour.
+      - name: first_event_ts
+        description: First log time in the hour.
+      - name: last_event_ts
+        description: Last log time in the hour.
       - name: minutes_recorded
         description: Minutes actually covered by rows (gaps excluded).
       - name: avg_joint_temperature
@@ -89,8 +97,14 @@ models:
           - unique
       - name: cycle_stretches
         description: How many separate stretches of the log carry this cycle number (2 for cycles 224-227 and 229-233).
+      - name: first_event_ts
+        description: First log time with this cycle number.
+      - name: last_event_ts
+        description: Last log time with this cycle number.
       - name: rows_total
         description: All rows with this cycle number.
+      - name: rows_known_status
+        description: Rows with a stop value (stop or no_stop).
       - name: rows_unknown_status
         description: Rows with no stop value.
       - name: stop_rows
@@ -101,5 +115,11 @@ models:
         description: True if any row in the cycle was a stop.
       - name: grip_lost_rows
         description: Rows with grip_lost = true.
+      - name: avg_joint_temperature
+        description: Mean of the per-row average joint temperature in the cycle.
       - name: max_joint_temperature
         description: Highest single joint temperature in the cycle.
+      - name: avg_total_abs_current
+        description: Mean of the per-row sum of absolute joint currents.
+      - name: avg_tool_current
+        description: Mean tool current in the cycle.
