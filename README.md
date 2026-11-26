@@ -14,7 +14,8 @@ when, and under what conditions**, and be alerted when it happens.
 |---|---|
 | Raw load and profiling (7,409 rows, 24 columns) | Done |
 | Project setup (pinned requirements, `.venv`, `.gitignore`) | Done |
-| Loader, dbt models, checks, CI, scheduling, streaming, monitoring, cloud, ML | Planned |
+| Loader (idempotent, validated, audited) | Done |
+| dbt models, checks, CI, scheduling, streaming, monitoring, cloud, ML | Planned |
 
 ## Setup (macOS or Linux, Python 3.13)
 
@@ -45,8 +46,15 @@ unzip data/raw/ur3_cobotops.zip -d data/raw
 ### Load it
 
 ```bash
-python ingest.py
+python ingest.py                 # loads every .xlsx in data/raw/ into cobot.duckdb
+python ingest.py                 # safe to repeat: rows are replaced, never duplicated
+python ingest.py --file data/raw/dataset_02052023.xlsx --db cobot.duckdb
 ```
+
+The loader stores the source values unchanged in `raw_logs`, adds
+`source_file` and `loaded_at`, and records every load in `load_audit`.
+It stops with a clear message if the file is missing, empty, or its
+columns changed.
 
 ## What profiling found
 
