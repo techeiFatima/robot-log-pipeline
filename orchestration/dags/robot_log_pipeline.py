@@ -21,7 +21,7 @@ import json
 import logging
 import os
 import shlex
-import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -78,28 +78,25 @@ def report_failure(context) -> None:
         f"for run {context.get('run_id')}. Logs: {getattr(ti, 'log_url', 'see Airflow UI')}"
     )
     log.error(message)
-    # Send it through the project's alerting (log file + optional webhook), in
-    # the project's own Python so Airflow needs none of its dependencies.
+    # Send it through the project's alerting (log file + optional webhook).
+    # robot_pipeline.alerts uses only the standard library, so it can be
+    # imported here without adding any pipeline dependency to Airflow.
     try:
-        subprocess.run(
-            [
-                PYTHON,
-                "-m",
-                "robot_pipeline.alerts",
-                "--name",
-                "pipeline_task_failed",
-                "--severity",
-                "critical",
-                "--message",
-                message,
-                "--dedup-key",
-                f"{context.get('run_id')}:{ti.task_id}",
-            ],
-            cwd=PROJECT_DIR,
-            timeout=60,
-            check=False,
+        if str(PROJECT_DIR) not in sys.path:
+            sys.path.insert(0, str(PROJECT_DIR))
+        from robot_pipeline.alerts import Alert, send
+
+        send(
+            Alert(
+                name="pipeline_task_failed",
+                severity="critical",
+                message=message,
+                details={"task_id": ti.task_id, "run_id": context.get("run_id")},
+                dedup_key=f"{context.get('run_id')}:{ti.task_id}",
+            ),
+            cooldown_seconds=24 * 3600,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+    except Exception as exc:  # never let alerting hide the real failure
         log.error("Could not send the failure alert: %s", exc)
 
 
