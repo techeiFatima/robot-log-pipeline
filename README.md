@@ -1,5 +1,7 @@
 # Robot Log Pipeline
 
+[![CI](https://github.com/techeiFatima/robot-log-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/techeiFatima/robot-log-pipeline/actions/workflows/ci.yml)
+
 A data engineering project that turns raw robot logs into clean,
 tested tables, so a team can ask **how often a robot stops itself,
 when, and under what conditions**, and be alerted when it happens.
@@ -17,7 +19,8 @@ when, and under what conditions**, and be alerted when it happens.
 | Loader (idempotent, validated, audited) | Done |
 | dbt models: clean table, stop episodes, summaries by hour and cycle | Done |
 | Checks: dbt tests, raw-vs-clean success test, 28 pytest tests | Done |
-| CI, CI, scheduling, streaming, monitoring, cloud, ML | Planned |
+| CI: lint, tests and dbt build on a SYNTHETIC sample, on every pull request | Done |
+| Scheduling, streaming, monitoring, cloud, ML | Planned |
 
 ## Setup (macOS or Linux, Python 3.13)
 
