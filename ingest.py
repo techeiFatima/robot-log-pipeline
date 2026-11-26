@@ -1,4 +1,5 @@
 import glob
+
 import duckdb
 import pandas as pd
 
