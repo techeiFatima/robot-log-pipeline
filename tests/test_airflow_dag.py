@@ -1,12 +1,15 @@
 """Checks the Airflow DAG's structure. Skipped when Airflow is not installed
-(the main venv does not include it; CI runs it in a separate job)."""
+(the main venv does not include it; CI runs it in a separate job, which sets
+REQUIRE_AIRFLOW=1 so a broken Airflow install fails instead of skipping)."""
 
+import os
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
-pytest.importorskip("airflow")
+if not os.environ.get("REQUIRE_AIRFLOW"):
+    pytest.importorskip("airflow")
 
 from airflow.dag_processing.dagbag import DagBag  # noqa: E402
 
