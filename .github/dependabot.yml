@@ -1,0 +1,7 @@
+# Keeps the commit-SHA pins of GitHub Actions up to date with weekly PRs.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
