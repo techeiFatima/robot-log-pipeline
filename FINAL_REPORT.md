@@ -1,8 +1,9 @@
 # Final report
 
 Built in one run on 2026-11-26: eleven phases, each on its own branch
-with its own pull request, each merged only after its checks passed
-(PRs [#1](https://github.com/techeiFatima/robot-log-pipeline/pull/1)–[#11](https://github.com/techeiFatima/robot-log-pipeline/pull/11)); this report is PR #12.
+with its own pull request, each merged only after its checks passed:
+run locally for Phases 1–4, before CI existed, and green GitHub Actions
+from Phase 5 on (PRs [#1](https://github.com/techeiFatima/robot-log-pipeline/pull/1)–[#11](https://github.com/techeiFatima/robot-log-pipeline/pull/11)); this report is PR #12.
 Every number below came from a query or command that was actually run.
 "Not run" means exactly that.
 
