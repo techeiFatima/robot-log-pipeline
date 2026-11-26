@@ -134,3 +134,34 @@ jobs:
           echo "Kafka did not start" && exit 1
       - name: Stream tests against the broker (must not skip)
         run: pytest -v -m kafka -rs tests/test_stream.py
+
+  databricks-transform-local:
+    name: Databricks transformation on local Spark (SYNTHETIC data)
+    runs-on: ubuntu-latest
+    env:
+      REQUIRE_SPARK: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt pyspark==4.3.0
+      - name: Spark tests (Java is preinstalled on the runner)
+        run: pytest -v -rs tests/test_databricks_transform.py
+
+  cloud-s3-mock:
+    name: S3 upload against moto (no AWS account)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-cloud.txt
+      - run: pip install -r requirements-dev.txt boto3==1.44.12 "moto[s3]==5.2.6"
+      - name: Fail (not skip) if the libraries are missing
+        run: python -c "import boto3, moto"
+      - run: pytest -v -rs tests/test_cloud_s3.py
