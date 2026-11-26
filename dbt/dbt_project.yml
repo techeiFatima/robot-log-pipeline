@@ -13,6 +13,8 @@ vars:
   # A pause between two consecutive log rows longer than this many seconds
   # is treated as a recording gap (rows are normally ~1.005 s apart).
   gap_threshold_seconds: 5
+  # Phase 11: predict whether a stop episode starts within this many seconds.
+  ml_horizon_seconds: 10
 
 flags:
   send_anonymous_usage_stats: false
@@ -26,3 +28,7 @@ models:
       +materialized: view
     marts:
       +materialized: table
+    ml:
+      +materialized: table
+      # DuckDB only: the model is trained locally; the Snowflake target skips it.
+      +enabled: "{{ target.type == 'duckdb' }}"
