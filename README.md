@@ -22,7 +22,8 @@ when, and under what conditions**, and be alerted when it happens.
 | CI: lint, tests and dbt build on a SYNTHETIC sample, on every pull request | Done |
 | Scheduling: daily Airflow DAG (load → build → test) with retries | Done (run with `airflow dags test`) |
 | Streaming: Kafka replay (simulation) with dedup, late and out-of-order handling | Done (real broker run here) |
-| Monitoring and alerting, cloud, ML | Planned |
+| Monitoring and alerting: stale data, low volume, failed checks, protective-stop alert | Done |
+| Cloud, ML | Planned |
 
 ## Setup (macOS or Linux, Python 3.13)
 
@@ -82,6 +83,15 @@ python -m robot_pipeline.checks   # success test: raw vs clean, exits 1 on failu
 pytest                            # unit + integration tests on SYNTHETIC data
 pytest -m "not integration"       # quick run without dbt
 ```
+
+### Monitor it
+
+```bash
+python -m robot_pipeline.monitor            # health checks; alerts go to state/alerts.log
+export ALERT_WEBHOOK_URL=https://...       # optional: also POST alerts to a webhook
+```
+
+Runbooks for every alert: [`docs/runbooks.md`](docs/runbooks.md).
 
 ### Stream it (Kafka, simulated)
 

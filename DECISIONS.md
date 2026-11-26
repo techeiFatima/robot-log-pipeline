@@ -110,3 +110,19 @@ each with a one-line reason. Newest phase at the bottom.
 - **The consumer's idle timer starts after the first message, with a 30 s startup grace.** Reason: a test failed once because a fresh broker's group coordinator took longer than the 5 s idle timeout (seen in testing, then fixed).
 - **CI runs the broker test against an `apache/kafka:4.4.0` service container, with `REQUIRE_KAFKA=1` so it cannot silently skip.** Reason: that checks the Docker image path on GitHub, which this build environment could not run.
 - **Disorder injection is deterministic (seeded).** Reason: tests can assert exact counts.
+
+## Phase 8: monitoring and alerting
+
+- **Alerts always go to `state/alerts.log` (JSON lines); `ALERT_WEBHOOK_URL` adds an HTTP POST; `ALERT_WEBHOOK_FORMAT=slack` sends Slack's `{"text": ...}` shape.** Reason: the brief's default and option; JSON lines are easy to search and parse.
+- **`alerts.py` uses only the standard library, and a failing webhook is logged, never raised.** Reason: it runs from Airflow callbacks too, and alerting must never crash the pipeline it watches.
+- **Batch alerts repeat at most once per day per alert (cooldown keyed by name and date).** Reason: a daily stale-data condition should not page someone on every re-run.
+- **"Data stopped arriving" uses the last load with new or changed content, threshold 26 h.** Reason: a daily schedule plus 2 hours of slack; unchanged re-runs must not reset the clock (the Phase 6 review fix).
+- **"Row counts far below normal" is checked two ways: latest load vs the median of the last 10 loads (needs 3), and each hour vs the median hour; threshold 50 %.** Reason: with one file there is no load history yet, but hourly volume can be judged today; the median resists outliers.
+- **"Failed checks" reads the success-check report, dbt's `run_results.json` and the pipeline run status.** Reason: covers the custom success test, every dbt test, and a run that failed before the checks ran.
+- **The business alert lives in the stream consumer, not the daily batch.** Reason: a daily batch cannot alert within 5 minutes; the consumer sees each event within seconds.
+- **One business alert per stop episode: a stop with no other stop from the same robot in the previous 5 s of event time; an optional cooldown is off by default.** Reason: matches the batch gap rule without needing row order across out-of-order arrivals; nothing is suppressed unless asked.
+- **The alert records `seconds_from_sent_to_alert`, measured from the producer's `sent_at`.** Reason: the replayed `event_ts` is from 2022, so "within 5 minutes" is measured from when the simulated robot sent the event; the target is checked on every alert, not assumed.
+- **An out-of-order stop that arrives before its predecessor can raise one extra alert.** Reason: erring toward alerting is safer than missing a stop.
+- **The consumer now treats "unknown topic" as "wait", not a crash.** Reason: found in testing; a consumer started before the producer must not die.
+- **Airflow: a `monitor` task (`trigger_rule=all_done`) runs after the checks even when a step failed; an empty `pipeline_ok` task is the only leaf.** Reason: Airflow sets a run's final state from its leaf tasks; without `pipeline_ok`, a successful monitor would have marked failed runs green.
+- **Task failure callbacks send `pipeline_task_failed` through the project's own Python (`ROBOT_PYTHON -m robot_pipeline.alerts`).** Reason: Airflow's environment needs none of the pipeline's dependencies.
