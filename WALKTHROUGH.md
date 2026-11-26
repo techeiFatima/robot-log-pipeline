@@ -130,3 +130,81 @@ no repeats, and timestamps never go backwards when sorted by `Num`.
 1. What exactly makes the loader safe to run twice, and why is it inside a transaction?
 2. Why does the loader compare column names exactly, including the trailing space in `"cycle "`?
 3. What is `load_audit` for, and which later phase depends on it?
+
+## Phase 3: data models with dbt
+
+dbt turns SQL `select` statements into tables and views, in dependency
+order, and lets you document and test them. Everything lives in `dbt/`.
+
+**What was added**
+
+- `dbt/dbt_project.yml`: names the project, says staging and intermediate
+  models are views and marts are tables, defines the variable
+  `gap_threshold_seconds` (5), and turns off dbt's usage tracking.
+- `dbt/profiles.yml`: how dbt connects. The `dev` target is the same
+  DuckDB file the loader writes. It contains no secrets.
+- `robot_pipeline/dbt_runner.py`: run dbt as
+  `python -m robot_pipeline.dbt_runner build`. It passes an absolute
+  database path, because dbt resolves a relative path against whatever
+  folder you are in. Running from the repo root once silently created an
+  empty `cobot.duckdb` one folder up; the wrapper prevents that.
+- `dbt/models/staging/_sources.yml`: declares the loader's tables
+  (`raw_logs`, `load_audit`) as **sources**, meaning data dbt reads but
+  never changes. It also sets a freshness rule: warn if no load in 2
+  days, error after 3.
+- `dbt/models/staging/stg_robot_logs.sql`: the clean table. One row in,
+  one row out. It strips the stray quotes and parses the timestamp
+  (findings 1, 2), turns the 0/1 stop number into a boolean plus a label
+  (5), renames `"cycle "` to `cycle_id` (6) and `Temperature_T0` to
+  `temperature_j0` (7), makes every name snake_case (8), and flags the
+  54 rows with no stop value as `unknown` instead of guessing (4). It also
+  keeps `timestamp_raw` and `had_stray_quotes`, so you can always see the
+  original value.
+- `dbt/models/intermediate/int_robot_log_sequence.sql`: adds facts that
+  depend on row order, using **window functions** (`lag`, running
+  `sum`): seconds since the previous row, a gap flag, a stop-episode id
+  and a cycle-stretch id. The "start of a group" flag summed as a running
+  total is the classic **gaps-and-islands** technique.
+- `dbt/models/marts/fct_stop_events.sql`: one row per stop episode, with
+  start, end, duration, cycle, whether grip was lost, and average
+  temperature, current and speed during the stop.
+- `dbt/models/marts/agg_stops_by_hour.sql` and `agg_stops_by_cycle.sql`:
+  the two summaries the brief asked for. Each counts total rows, known
+  and unknown rows, stop rows and stop episodes separately.
+- `dbt/macros/row_metrics.sql`: small reusable SQL snippets (average
+  joint temperature, total absolute current, `count_if`), so the marts
+  don't repeat long expressions.
+- `_stg_models.yml`, `_int_models.yml`, `_marts.yml`: a description for
+  every column. The data dictionary in Phase 10 is built from these.
+
+**What the models show (from the real file)**
+
+- 7,409 clean rows, the same as raw: 7,077 `no_stop`, 278 `stop`,
+  54 `unknown`.
+- The 278 stop rows form **108 stop episodes**. They last 1 to 12 rows,
+  1.58 s on average and 11.07 s at most.
+- By hour (UTC), episodes / rows: 08:00 → 16 / 2,494, 09:00 → 5 / 375,
+  14:00 → 31 / 2,387, 15:00 → 56 / 2,153. The stop-row rate rises from
+  2.1 % at 08:00 to 5.6 % at 15:00.
+- 78 of 240 cycle numbers contain a stop.
+- New finding: cycle numbers 224–227 and 229–233 each appear in two
+  separate stretches of the log.
+
+**Alternatives rejected**
+
+- *Drop the 54 unknown rows in staging.* That is exactly the silent
+  data loss the success test forbids.
+- *Treat unknown as "no stop".* That would be a guess, and it would
+  understate the stop rate if any of them were stops.
+- *One big model.* Splitting staging (row cleanup), intermediate
+  (ordering logic) and marts (answers) keeps each piece testable, and
+  keeps the clean table a simple 1:1 copy of raw.
+- *dbt v2 (Fusion).* Newer, but its DuckDB support is not yet complete.
+- *Count stop rows instead of episodes.* One 12-second stop is one event,
+  not twelve.
+
+**Questions you should be able to answer**
+
+1. Why does `stg_robot_logs` keep the 54 unknown rows, and how can a reader tell them apart?
+2. How does the running `sum` of `is_stop_episode_start` turn 278 stop rows into 108 episodes?
+3. Why is a cycle number not enough to identify one continuous cycle in this data?

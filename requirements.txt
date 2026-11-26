@@ -3,3 +3,7 @@
 duckdb==2.0.1
 pandas==3.1.1
 openpyxl==3.1.5
+# dbt Core v1 + the DuckDB adapter. dbt-core is pinned explicitly because pip
+# otherwise picks a pre-release when other adapters are installed alongside.
+dbt-core==1.12.7
+dbt-duckdb==1.11.1

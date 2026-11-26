@@ -1,0 +1,75 @@
+version: 2
+
+models:
+  - name: stg_robot_logs
+    description: >
+      One clean row per raw log row (no rows dropped). Types fixed, names in
+      snake_case, stray quotes removed from timestamps. Rows with no stop
+      value are kept and flagged with stop_status = 'unknown'.
+    columns:
+      - name: log_id
+        description: Unique row key, "<source_file>:<row_num>".
+      - name: source_file
+        description: Name of the Excel file the row was loaded from.
+      - name: loaded_at
+        description: When the loader stored the row (UTC).
+      - name: row_num
+        description: The source's "Num" column, a 1-based row counter within the file.
+      - name: timestamp_raw
+        description: The source "Timestamp" text exactly as delivered, quotes included.
+      - name: had_stray_quotes
+        description: True when timestamp_raw was wrapped in double quotes (finding 2).
+      - name: event_ts
+        description: When the robot logged the row, as a TIMESTAMP in UTC (source values end in "Z").
+      - name: current_j0
+        description: Joint 0 current, as delivered. Can be negative (meaning unconfirmed, finding 9).
+      - name: current_j1
+        description: Joint 1 current, as delivered.
+      - name: current_j2
+        description: Joint 2 current, as delivered.
+      - name: current_j3
+        description: Joint 3 current, as delivered.
+      - name: current_j4
+        description: Joint 4 current, as delivered.
+      - name: current_j5
+        description: Joint 5 current, as delivered.
+      - name: temperature_j0
+        description: >
+          Source column "Temperature_T0", renamed to match the J1..J5 pattern.
+          Assumed to be joint 0; this is not confirmed by the dataset authors (finding 7).
+      - name: temperature_j1
+        description: Joint 1 temperature, as delivered.
+      - name: temperature_j2
+        description: Joint 2 temperature, as delivered.
+      - name: temperature_j3
+        description: Joint 3 temperature, as delivered.
+      - name: temperature_j4
+        description: Joint 4 temperature, as delivered.
+      - name: temperature_j5
+        description: Joint 5 temperature, as delivered.
+      - name: speed_j0
+        description: Joint 0 speed, as delivered. Can be negative (meaning unconfirmed, finding 9).
+      - name: speed_j1
+        description: Joint 1 speed, as delivered.
+      - name: speed_j2
+        description: Joint 2 speed, as delivered.
+      - name: speed_j3
+        description: Joint 3 speed, as delivered.
+      - name: speed_j4
+        description: Joint 4 speed, as delivered.
+      - name: speed_j5
+        description: Joint 5 speed, as delivered.
+      - name: tool_current
+        description: Tool (gripper) current, as delivered.
+      - name: cycle_id
+        description: The source's "cycle " column (trailing space removed). Not unique in time; see agg_stops_by_cycle.
+      - name: stop_status
+        description: "'stop' (source value 1), 'no_stop' (0), 'unknown' (missing). 'invalid' would mean an unexpected value and fails a test."
+      - name: protective_stop
+        description: True/false from the source's Robot_ProtectiveStop; NULL when unknown. Never guessed.
+      - name: is_status_unknown
+        description: True for rows whose stop value is missing (54 rows in the UCI file).
+      - name: grip_lost
+        description: >
+          As delivered. In unknown-status rows it is always false, which may be a
+          default rather than a measurement (finding 10, open question).

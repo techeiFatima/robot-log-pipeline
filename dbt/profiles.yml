@@ -1,0 +1,12 @@
+# dbt connection profiles. No secrets are stored here: every value that
+# differs per machine comes from an environment variable.
+robot_logs:
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
+  outputs:
+    # Default: local DuckDB file shared with the loader (ingest.py).
+    # ROBOT_DB_PATH must be an absolute path; `python -m robot_pipeline.dbt_runner`
+    # sets it for you. (dbt resolves relative paths against the current directory.)
+    dev:
+      type: duckdb
+      path: "{{ env_var('ROBOT_DB_PATH') }}"
+      threads: 4
