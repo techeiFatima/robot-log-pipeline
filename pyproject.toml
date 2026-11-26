@@ -10,8 +10,8 @@ requires-python = ">=3.13"
 # Dependencies are pinned in requirements*.txt; this file only makes the
 # robot_pipeline package importable from anywhere (pip install -e .).
 
-[tool.setuptools]
-packages = ["robot_pipeline"]
+[tool.setuptools.packages.find]
+include = ["robot_pipeline*"]
 
 [tool.ruff]
 line-length = 100
@@ -25,4 +25,5 @@ select = ["E", "F", "I", "B", "UP"]
 testpaths = ["tests"]
 markers = [
     "integration: end-to-end tests that run dbt (slower)",
+    "kafka: needs a running Kafka broker (skipped otherwise)",
 ]
