@@ -136,7 +136,7 @@ each with a one-line reason. Newest phase at the bottom.
 - **An out-of-order stop that arrives before its predecessor can raise one extra alert.** Reason: erring toward alerting is safer than missing a stop.
 - **The consumer now treats "unknown topic" as "wait", not a crash.** Reason: found in testing; a consumer started before the producer must not die.
 - **Airflow: a `monitor` task (`trigger_rule=all_done`) runs after the checks even when a step failed; an empty `pipeline_ok` task is the only leaf.** Reason: Airflow sets a run's final state from its leaf tasks; without `pipeline_ok`, a successful monitor would have marked failed runs green.
-- **Task failure callbacks send `pipeline_task_failed` through the project's own Python (`ROBOT_PYTHON -m robot_pipeline.alerts`).** Reason: Airflow's environment needs none of the pipeline's dependencies.
+- **Task failure callbacks send `pipeline_task_failed` through `robot_pipeline.alerts` (standard library only, imported from the project folder).** Reason: Airflow's environment needs none of the pipeline's dependencies.
 
 ### Changes after the code review on the Phase 8 PR (Sourcery bot, 22 comments)
 
@@ -149,7 +149,8 @@ each with a one-line reason. Newest phase at the bottom.
 - **A forced reload of unchanged content is recorded as `reloaded` and does not count as new data.** Reason: `--force` must not hide "data stopped arriving".
 - **Not changed: a durable webhook outbox.** Reason: delivery stays at-least-once; a rare duplicate alert after a crash is acceptable, a missed one is not.
 - **Not changed: the episode lookup query.** Reason: it only reads a 5-second window per stop; measured 0.016 s median delay end to end.
-- **Not changed: the subprocess call in the DAG callback (flagged by opengrep).** Reason: it passes an argument list with no shell, so values cannot be run as commands.
+- **The DAG failure callback now imports `robot_pipeline.alerts` directly instead of running it as a subprocess.** Reason: opengrep flagged the subprocess call. It was not injectable (argument list, no shell), but `alerts.py` is standard-library only, so a direct import is simpler and removes the question entirely.
+
 ## Phase 9: cloud (S3, Snowflake, Databricks): NOT RUN, needs accounts
 
 - **No accounts created, no credentials entered, nothing spent; everything is marked "NOT RUN, NEEDS ACCOUNTS".** Reason: hard limit in the brief.
