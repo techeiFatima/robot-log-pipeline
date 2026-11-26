@@ -46,7 +46,11 @@ def consume(
     """Read and store messages. ``idle_timeout`` counts only after the first
     message; before that, ``startup_timeout`` allows for group coordination on a
     freshly started broker (which can take several seconds)."""
-    from confluent_kafka import Consumer, KafkaException
+    from confluent_kafka import Consumer, KafkaError, KafkaException
+
+    # Errors that mean "nothing to read yet", not "broken": e.g. the consumer
+    # started before the producer created the topic.
+    transient = {KafkaError.UNKNOWN_TOPIC_OR_PART, KafkaError._PARTITION_EOF}
 
     consumer = Consumer(
         {
@@ -73,6 +77,9 @@ def consume(
                         break
                 continue
             if msg.error():
+                if msg.error().code() in transient:
+                    log.info("Waiting: %s", msg.error().str())
+                    continue
                 raise KafkaException(msg.error())
             last_message = time.monotonic()
             try:
@@ -103,14 +110,37 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--allowed-lateness", type=float, default=10.0, help="seconds")
     p.add_argument("--idle-timeout", type=float, help="stop after this many silent seconds")
     p.add_argument("--max-messages", type=int)
+    p.add_argument("--no-stop-alerts", action="store_true", help="disable the business alert")
+    p.add_argument("--stop-alert-cooldown", type=float, default=0.0, help="seconds of event time")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     servers = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     store = StreamStore(args.db, args.allowed_lateness)
+    from robot_pipeline.stream.stop_alerts import StopAlerter
+
+    alerter = (
+        None
+        if args.no_stop_alerts
+        else StopAlerter(store, cooldown_seconds=args.stop_alert_cooldown)
+    )
     try:
-        n = consume(store, servers, args.topic, args.group, args.idle_timeout, args.max_messages)
+        n = consume(
+            store,
+            servers,
+            args.topic,
+            args.group,
+            args.idle_timeout,
+            args.max_messages,
+            hooks=[alerter] if alerter else None,
+        )
         log.info("Handled %d messages this run: %s", n, store.stats.counts)
+        if alerter:
+            log.info(
+                "Protective-stop alerts sent: %d (max delay from send to alert: %.2f s)",
+                alerter.alerts_sent,
+                alerter.max_delay_seconds,
+            )
         log.info("Totals in %s: %s", args.db, store.summary())
     except KeyboardInterrupt:
         log.info("Stopped. Totals: %s", store.summary())
