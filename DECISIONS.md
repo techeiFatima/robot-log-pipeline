@@ -167,3 +167,13 @@ each with a one-line reason. Newest phase at the bottom.
 - **Deployed as a Declarative Automation Bundle (formerly Asset Bundles) with one serverless Python task.** Reason: the current, code-first way to define Databricks jobs from a repo.
 - **The PySpark code was run on local Apache Spark 4.3.0 on the real file and compared with dbt's output: identical on all 30 shared columns.** Reason: proves the logic without a workspace; Databricks itself is not verified.
 - **PySpark is not in any requirements file for the main venv; CI installs it in its own job.** Reason: it is large and only needed for this one check; Databricks provides it at run time.
+
+## Phase 10: documentation
+
+- **Every number in the README and the summary comes from `python -m robot_pipeline.report` (or the success-check output), not typed by hand.** Reason: the brief requires every number to come from a query; one command lets anyone re-check them.
+- **The data dictionary is generated (`python -m robot_pipeline.data_dictionary`) from the dbt YAML descriptions plus the live column types, and a test fails if any column lacks a description.** Reason: hand-written dictionaries drift from the code.
+- **Columns that pass through unchanged inherit their staging description in the dictionary.** Reason: one description per column, written once.
+- **Architecture diagram in Mermaid inside the README.** Reason: GitHub renders it, and it stays in version control as text.
+- **The non-engineer summary states the temperature finding as an association, not a cause.** Reason: temperature and time of day rise together in one day of data; claiming a cause would not be honest.
+- **The README status table separates "built" from "run and verified here".** Reason: the brief says the README may only claim what was built and run.
+- **One Phase 10 commit is labelled "WIP".** Reason: it was committed before splitting; rewriting it would break the no-history-rewrite rule, so it stays as is.

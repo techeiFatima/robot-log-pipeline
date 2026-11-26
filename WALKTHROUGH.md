@@ -701,3 +701,48 @@ steps are in `cloud/README.md`.
 1. Why does the S3 layout keep both the original `.xlsx` and a CSV copy?
 2. Which single piece of SQL differs between DuckDB and Snowflake, and how does dbt choose the right version?
 3. How was the Databricks transformation checked without a Databricks workspace, and what does that check *not* prove?
+
+## Phase 10: documentation
+
+**What was added**
+
+- `README.md`, rewritten: what the project does and the data disclaimer
+  (UCI dataset as a stand-in, no company affiliation, the stream is a
+  simulation); a Mermaid architecture diagram; a status table that
+  separates *built* from *run and verified here*; how to run; the data
+  source; the ten profiling findings plus two new ones, with how each is
+  handled; the real results; the success test and its real output; the
+  stream and alert results.
+- `robot_pipeline/report.py`: `python -m robot_pipeline.report` prints
+  every headline number straight from the database. If the README ever
+  disagrees with it, the README is wrong.
+- `robot_pipeline/data_dictionary.py` and `docs/data_dictionary.md`:
+  generated from the dbt column descriptions and the real column types
+  in DuckDB, so it cannot drift. `docs/_data_dictionary_extra.md` holds
+  the parts outside dbt (stream tables, state files).
+- `docs/summary_for_non_engineers.md`: one page in plain language. What
+  was found, how much to trust it, what was built.
+- `docs/runbooks.md` (from Phase 8): one runbook per alert.
+- Missing column descriptions were added to `_marts.yml`. A new test
+  fails if any column in the dictionary has no description.
+
+**How it was verified**
+
+`python -m robot_pipeline.report` was run on the real data, and each
+number in the README and the summary was copied from its output. The
+integration test builds the synthetic database and runs both generators.
+
+**Alternatives rejected**
+
+- *`dbt docs generate` / `dbt docs serve` as the data dictionary.* It is
+  useful, and still works (`python -m robot_pipeline.dbt_runner docs
+  generate`), but it produces a website, not a file that reads well on
+  GitHub, and it doesn't cover the stream tables.
+- *A drawn PNG diagram.* It can't be diffed or reviewed in a PR.
+- *Writing results by hand.* Easy to get wrong and impossible to re-check.
+
+**Questions you should be able to answer**
+
+1. If someone doubts a number in the README, how can they check it in one command?
+2. Why is the data dictionary generated rather than written, and what stops it from going stale?
+3. Why does the summary call the temperature pattern a "link, not proof of a cause"?
