@@ -76,7 +76,7 @@ class LoadResult:
     rows_replaced: int
     sha256: str
     loaded_at: datetime
-    action: str  # "loaded", "replaced" or "unchanged"
+    action: str  # "loaded", "replaced", "reloaded" (same content rewritten) or "unchanged"
 
 
 def _quote(name: str) -> str:
@@ -175,6 +175,18 @@ def _ensure_tables(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(f"ALTER TABLE {AUDIT_TABLE} ADD COLUMN IF NOT EXISTS action VARCHAR")
 
 
+def _last_sha(con: duckdb.DuckDBPyConnection, source_file: str) -> str | None:
+    """Checksum of the last load that actually wrote this file's rows."""
+    row = _one(
+        con,
+        f"""SELECT sha256 FROM {AUDIT_TABLE}
+            WHERE source_file = ? AND coalesce(action, 'loaded') <> 'unchanged'
+            ORDER BY loaded_at DESC LIMIT 1""",
+        [source_file],
+    )
+    return row[0] if row else None
+
+
 def _is_unchanged(con: duckdb.DuckDBPyConnection, source_file: str, sha: str) -> bool:
     """True if this exact content is already fully loaded under this name."""
     last = _one(
@@ -222,6 +234,7 @@ def load_files(paths: list[Path], db_path: Path, force: bool = False) -> list[Lo
                 (before,) = _one(
                     con, f"SELECT count(*) FROM {RAW_TABLE} WHERE source_file = ?", [name]
                 )
+                same_content = _last_sha(con, name) == sha
                 if not force and _is_unchanged(con, name, sha):
                     action, replaced, stored = "unchanged", 0, before
                 else:
@@ -238,7 +251,13 @@ def load_files(paths: list[Path], db_path: Path, force: bool = False) -> list[Lo
                     )
                     if stored != len(df):
                         raise LoaderError(f"Row count mismatch: read {len(df)}, stored {stored}")
-                    action, replaced = ("replaced" if before else "loaded"), before
+                    if not before:
+                        action = "loaded"
+                    elif same_content:
+                        action = "reloaded"  # forced or repaired; same content, not new data
+                    else:
+                        action = "replaced"
+                    replaced = before
                 con.execute(
                     f"INSERT INTO {AUDIT_TABLE} VALUES (?, ?, ?, ?, ?, ?)",
                     [name, sha, stored, replaced, loaded_at, action],

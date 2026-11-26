@@ -12,6 +12,11 @@ further limit alerts when stops come in bursts.
 
 The replay is a simulation, so event_ts is the 2022 recording time; the
 delay is measured from sent_at (when the replay "robot" sent the event).
+
+Sent alerts are recorded in the stream store (table stop_alerts_sent), in
+the same database as the events. So if the consumer stops after storing a
+stop but before alerting, the redelivered message (now a "duplicate") still
+gets its alert, and the cooldown survives restarts.
 """
 
 from __future__ import annotations
@@ -24,6 +29,29 @@ from robot_pipeline.stream.store import Outcome, StreamStore
 TARGET_SECONDS = 300  # the business requirement: alert within 5 minutes
 
 
+SENT_DDL = """
+CREATE TABLE IF NOT EXISTS stop_alerts_sent (
+    event_id   VARCHAR PRIMARY KEY,
+    robot_id   VARCHAR NOT NULL,
+    event_ts   TIMESTAMP NOT NULL,
+    alerted_at TIMESTAMPTZ NOT NULL
+)
+"""
+
+
+def _sent_at_delay(sent_at, now: datetime) -> float | None:
+    """Seconds since the producer sent the event; None if sent_at is unusable."""
+    if not isinstance(sent_at, str):
+        return None
+    try:
+        ts = datetime.fromisoformat(sent_at)
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    return (now - ts).total_seconds()
+
+
 class StopAlerter:
     def __init__(
         self,
@@ -32,37 +60,59 @@ class StopAlerter:
         cooldown_seconds: float = 0.0,
     ):
         self.store = store
+        self.store.con.execute(SENT_DDL)
         self.episode_gap = timedelta(seconds=episode_gap_seconds)
         self.cooldown = timedelta(seconds=cooldown_seconds)
-        self.last_alert_event_ts: dict[str, datetime] = {}
         self.alerts_sent = 0
         self.max_delay_seconds = 0.0
 
+    def _q(self, sql: str, params: list):
+        return self.store.con.execute(sql, params).fetchall()
+
+    def _already_alerted(self, event_id: str) -> bool:
+        return bool(self._q("SELECT 1 FROM stop_alerts_sent WHERE event_id = ?", [event_id]))
+
     def _is_episode_start(self, event: dict) -> bool:
+        """No other stop from this robot in the previous gap, *including* stops
+        with exactly the same timestamp (so tied rows are one episode). The
+        query only looks at that short time window."""
         ts = event["event_ts_parsed"]
-        rows = self.store.con.execute(
+        rows = self._q(
             """SELECT count(*) FROM stream_events
                WHERE robot_id = ? AND protective_stop = 1 AND event_id <> ?
-                 AND event_ts >= ? AND event_ts < ?""",
+                 AND event_ts >= ? AND event_ts <= ?""",
             [event["robot_id"], event["event_id"], ts - self.episode_gap, ts],
-        ).fetchall()
+        )
         return rows[0][0] == 0
 
+    def _in_cooldown(self, robot: str, ts: datetime) -> bool:
+        if not self.cooldown:
+            return False
+        rows = self._q(
+            "SELECT max(event_ts) FROM stop_alerts_sent WHERE robot_id = ? AND event_ts <= ?",
+            [robot, ts],
+        )
+        last = rows[0][0]
+        return last is not None and ts - last < self.cooldown
+
     def __call__(self, event: dict, outcome: Outcome) -> None:
-        if outcome in (Outcome.DUPLICATE, Outcome.REJECTED):
+        if outcome == Outcome.REJECTED:
             return
         if event["payload"].get("Robot_ProtectiveStop") != 1:
+            return
+        # A duplicate is only skipped if its alert really went out; otherwise
+        # this is the redelivery after a crash and the alert is retried.
+        if self._already_alerted(event["event_id"]):
             return
         if not self._is_episode_start(event):
             return
         robot, ts = event["robot_id"], event["event_ts_parsed"]
-        last = self.last_alert_event_ts.get(robot)
-        if self.cooldown and last is not None and timedelta(0) <= ts - last < self.cooldown:
+        if self._in_cooldown(robot, ts):
             return
 
         now = datetime.now(UTC)
         sent_at = event.get("sent_at")
-        delay = (now - datetime.fromisoformat(sent_at)).total_seconds() if sent_at else None
+        delay = _sent_at_delay(sent_at, now)
         late_note = " (arrived late)" if outcome == Outcome.LATE else ""
         alert = Alert(
             name="protective_stop",
@@ -83,10 +133,14 @@ class StopAlerter:
                 "grip_lost": event["payload"].get("grip_lost"),
                 "simulation": True,
             },
-            dedup_key=f"protective_stop:{event['event_id']}",
         )
-        if send(alert):
-            self.alerts_sent += 1
-            self.last_alert_event_ts[robot] = ts
-            if delay is not None:
-                self.max_delay_seconds = max(self.max_delay_seconds, delay)
+        # No dedup_key: repeats are prevented by stop_alerts_sent, so the shared
+        # cooldown state file does not grow with one key per stop.
+        send(alert)
+        self.store.con.execute(
+            "INSERT INTO stop_alerts_sent VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+            [event["event_id"], robot, ts, now],
+        )
+        self.alerts_sent += 1
+        if delay is not None:
+            self.max_delay_seconds = max(self.max_delay_seconds, delay)

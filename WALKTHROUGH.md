@@ -581,7 +581,8 @@ Kept by design, with replies on the PR: `event_id` stays
 
 - `python -m robot_pipeline.monitor --stream` on the real data: 3 checks
   OK. `hourly_rows_low` fired: 09:00 UTC has 375 rows against a median
-  of 2,270, because recording stopped ~6 minutes into that hour.
+  of 2,270, because recording stopped ~6 minutes into that hour. (After
+  the review, empty hours count too: 10:00–13:00 with 0 rows.)
   `stream_silent` fired because the replay had finished 10 minutes before.
 - Business alert, consumer and producer running at the same time
   (1,500 rows at 10× speed): 8 alerts for 8 stop episodes (the batch
@@ -614,6 +615,24 @@ tested against a local HTTP server.
   check is stricter (26 h) and knows about unchanged re-runs.
 - *Alert on every stop row.* 278 alerts instead of ~100; one per episode
   is what a person needs.
+
+**Changes after code review**
+
+The review bot left 22 comments. The most important: if the consumer
+stopped after storing a stop but before alerting, the redelivered message
+counted as a duplicate and the alert was lost. Sent stop alerts are now
+recorded in `stream.duckdb` (`stop_alerts_sent`), and a redelivered stop
+without a recorded alert gets one. Other fixes, each with a test:
+- a persistent cooldown, and tied timestamps count as one episode;
+- a file lock and 7-day expiry for the cooldown state;
+- no webhook redirects, and a failed webhook doesn't start the cooldown;
+- empty hours count as low volume (the real data now shows 09:00–13:00);
+- one loader run is compared as one batch;
+- `--force` reloads are not "new data";
+- a missing dbt results file is reported;
+- thresholds that aren't finite numbers fall back to the defaults.
+Three points were answered instead of changed (see DECISIONS.md).
+Re-measured: 8 alerts for 8 episodes, median 0.016 s, max 1.3 s.
 
 **Questions you should be able to answer**
 

@@ -23,7 +23,10 @@ protective-stop alert fires once per stop episode.
 (`Robot_ProtectiveStop = 1`) and the same robot had no other stop in the
 previous 5 seconds of event time, i.e. a new stop episode begins.
 Measured delay from the event being sent to the alert: median 0.016 s,
-max 2.2 s in a 1,500-row concurrent test run (target: 5 minutes).
+max 2.2 s in a 1,500-row concurrent test run, and max 1.3 s when
+re-measured after the review changes (target: 5 minutes). Sent alerts are
+recorded in `stop_alerts_sent` in `stream.duckdb`. A stop whose alert
+did not go out before a crash is alerted when Kafka re-delivers it.
 
 **Means:** the robot stopped itself for safety (for example a collision
 or overload was detected). In this project the "robot" is a replay of
@@ -54,7 +57,8 @@ event time per robot.
 
 **Fires when:** no load brought **new or changed** data for more than
 `ROBOT_MAX_HOURS_WITHOUT_DATA` hours (default 26). Re-loading an unchanged
-file does not count (`load_audit.action = 'unchanged'`).
+file does not count, not even with `--force` (`load_audit.action` is
+`unchanged` or `reloaded`; only `loaded` and `replaced` count).
 
 **Means:** the upstream export stopped, the file landed in the wrong
 folder, or the same file is being delivered again and again.
@@ -94,13 +98,14 @@ under the same name replaces the old rows on the next `python ingest.py`.
 
 ## `hourly_rows_low` (warning)
 
-**Fires when:** an hour in `agg_stops_by_hour` has fewer than 50 % of
-the median rows per hour.
+**Fires when:** an hour between the first and last hour with data has
+fewer than 50 % of the median rows of the hours that have data. Hours with
+no rows at all count as 0.
 
 **Means:** the robot was idle, or the logger stopped for part of that
 hour. On the UCI file this fires for **09:00 UTC (375 rows against a
-median of 2,270)**: recording stopped about 6 minutes into that hour, and
-there is a 5.2-hour gap before 14:19.
+median of 2,270) and 10:00–13:00 (0 rows each)**: recording stopped about
+6 minutes into 09:00 and resumed at 14:19, a 5.2-hour gap.
 
 **Check:**
 ```sql
@@ -122,7 +127,10 @@ care (small sample).
   unknown rows differ);
 - `dbt/target/run_results.json` has a test or model with status `fail`
   or `error`;
-- `state/pipeline_run_latest.json` says the last Airflow run failed.
+- `dbt/target/run_results.json` is missing (no evidence dbt ran);
+- `state/pipeline_run_latest.json` says the last Airflow run failed (not
+  checked inside Airflow, where that file still describes the previous
+  run; there, the task failure alert reports the current run).
 
 **Check:**
 ```bash
