@@ -631,7 +631,9 @@ without a recorded alert gets one. Other fixes, each with a test:
 - `--force` reloads are not "new data";
 - a missing dbt results file is reported;
 - thresholds that aren't finite numbers fall back to the defaults.
-Three points were answered instead of changed (see DECISIONS.md).
+Two points were answered instead of changed (see DECISIONS.md). The
+Airflow failure callback now imports the alert code directly instead of
+starting a subprocess.
 Re-measured: 8 alerts for 8 episodes, median 0.016 s, max 1.3 s.
 
 **Questions you should be able to answer**
