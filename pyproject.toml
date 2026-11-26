@@ -1,8 +1,17 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "robot-log-pipeline"
 version = "0.1.0"
 description = "A data pipeline for robot system logs (UR3 CobotOps dataset as a stand-in)."
 requires-python = ">=3.13"
+# Dependencies are pinned in requirements*.txt; this file only makes the
+# robot_pipeline package importable from anywhere (pip install -e .).
+
+[tool.setuptools]
+packages = ["robot_pipeline"]
 
 [tool.ruff]
 line-length = 100
