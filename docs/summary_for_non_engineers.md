@@ -55,5 +55,8 @@ two yes/no flags, "protective stop" and "grip lost".
   replayed the recording as if it were live, alerts arrived a median of
   0.016 seconds after the robot "sent" the stop, and never more than 2.2
   seconds. (The replay is a simulation; no real robot was connected.)
-- A first **prediction model** for upcoming stops. Its honest results are
-  in the README.
+- A first **prediction model** that tries to warn 10 seconds before a
+  stop. It picks up a real pattern (stops come in clusters, and at certain
+  points in a work cycle), but as a warning system it caught only 10 of
+  57 stops in the test period. It is not ready to be used; the live stop
+  alert is what to rely on.

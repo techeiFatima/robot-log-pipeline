@@ -1,5 +1,6 @@
 # Development and CI tools, on top of the runtime dependencies.
 -r requirements.txt
+-r requirements-ml.txt
 pytest==9.2.0
 ruff==0.17.6
 # Install this project's own package in editable mode.

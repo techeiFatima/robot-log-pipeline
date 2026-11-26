@@ -1,0 +1,54 @@
+version: 2
+
+models:
+  - name: ml_stop_features
+    description: >
+      Training data for the stop-prediction model: one row per log row that is
+      not already a stop and has a known status. The label looks ahead; every
+      feature uses only the current and earlier rows (tested). DuckDB only.
+    columns:
+      - name: log_id
+        description: Same key as stg_robot_logs.
+        data_tests:
+          - not_null
+          - unique
+      - name: event_ts
+        description: Log time (UTC).
+        data_tests:
+          - not_null
+      - name: stop_within_horizon
+        description: "LABEL: a new stop episode starts within the next ml_horizon_seconds (default 10 s), with no recording gap before it."
+        data_tests:
+          - not_null
+      - name: next_stop_event_id
+        description: "LOOK-AHEAD, evaluation only (never a feature): the next stop episode in this file, so warnings can be counted per episode."
+      - name: label_window_complete
+        description: False when the label window is cut by a recording gap or the end of the file; such rows are not used for training.
+        data_tests:
+          - not_null
+      - name: avg_joint_temp
+        description: Average of the six joint temperatures on this row.
+      - name: total_abs_current
+        description: Sum of the absolute joint currents on this row.
+      - name: total_abs_speed
+        description: Sum of the absolute joint speeds on this row.
+      - name: grip_lost_now
+        description: 1 if grip_lost on this row, else 0.
+      - name: total_abs_current_avg10
+        description: Mean of total_abs_current over this row and the 9 before it.
+      - name: total_abs_current_std10
+        description: Standard deviation of total_abs_current over this row and the 9 before it.
+      - name: total_abs_speed_avg10
+        description: Mean of total_abs_speed over this row and the 9 before it.
+      - name: tool_current_avg10
+        description: Mean tool current over this row and the 9 before it.
+      - name: grip_lost_last10
+        description: 1 if grip was lost on this row or any of the 9 before it.
+      - name: avg_joint_temp_change10
+        description: avg_joint_temp now minus 10 rows earlier.
+      - name: seconds_since_last_stop
+        description: Seconds since the most recent earlier stop row; NULL if none yet.
+      - name: stop_episodes_last300
+        description: Stop episodes that started in the previous 300 rows (about 5 minutes).
+      - name: rows_into_cycle
+        description: Position of this row within its contiguous cycle stretch (1 = first row).

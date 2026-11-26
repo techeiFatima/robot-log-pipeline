@@ -746,3 +746,87 @@ integration test builds the synthetic database and runs both generators.
 1. If someone doubts a number in the README, how can they check it in one command?
 2. Why is the data dictionary generated rather than written, and what stops it from going stale?
 3. Why does the summary call the temperature pattern a "link, not proof of a cause"?
+
+## Phase 11: a model that predicts protective stops
+
+**The question.** "Is this row a stop?" is easy and useless: during a stop
+the joint speed drops to about zero, so any model gets it right after
+the fact. The useful question is **"will a new stop start in the next
+10 seconds?"**, which is an early warning.
+
+**What was added**
+
+- `dbt/models/ml/ml_stop_features.sql`: one row per log row that is not
+  already a stop. **Label** `stop_within_horizon`: a stop episode starts
+  within 10 s and no gap comes first. It is the only column that looks
+  ahead. **Features**, looking only backwards: the current sensor
+  values; averages and spreads over the last 10 rows; temperature change
+  over 10 rows; seconds since the last stop; stops in the last 300 rows;
+  position in the current cycle. Rows whose 10-second window is cut by a
+  gap are flagged and not used. Enabled only on DuckDB.
+- `dbt/models/ml/_ml.yml`: column descriptions and tests.
+- `robot_pipeline/ml/train.py`: `python -m robot_pipeline.ml.train
+  --write-docs`. It splits by time (train on earlier, test on later),
+  drops training rows within 10 s of the split, picks the threshold on
+  the end of the training period, and compares four approaches. The
+  outputs are `state/ml/model_report.json` and `docs/model_report.md`.
+- `tests/test_ml.py`: the split never mixes time and purges the border;
+  episode and false-alarm counting; recorded hours skip gaps;
+  **features never look ahead**; training runs end to end on synthetic
+  data.
+
+**Results on the real file (test: 14:57 to 15:36 UTC, 57 stops)**
+
+| Approach | PR-AUC (95 % CI) | Stops warned in time | False alarms per recorded hour |
+|---|---|---|---|
+| Base rate | 0.209 | 0 / 57 | 0 |
+| "A stop happened recently" rule | 0.157 (0.130–0.187) | 57 / 57 (warns almost all the time) | 1.6 |
+| Logistic regression | 0.232 (0.200–0.269) | 29 / 57 | 103.9 |
+| Gradient-boosted trees | 0.325 (0.260–0.407) | 10 / 57 | 32.0 |
+
+**How to read it.** PR-AUC is the area under the precision-recall
+curve. A model that knows nothing scores the share of positive rows
+(here 0.209). The gradient-boosted trees rank risky moments better than
+that, and even the low end of the interval (0.260) is above it. But at
+the threshold chosen on validation, before the test period, they warn
+for only 10 of 57 stops. The test period has 2.5 times the stop rate of
+training, so a threshold from earlier in the day doesn't carry over.
+Logistic regression is no better than chance. The most useful inputs on
+validation: stops in the last ~5 minutes, and position in the cycle.
+Conclusion: real signal, not a usable warning. The model is
+deterministic: two runs give the identical report.
+
+**Mistakes that were caught.** An independent review agent read the
+Phase 9–11 code (the review bot's weekly budget had run out) and found two
+evaluation bugs that made the model look better than it is. (1) The
+threshold was tuned on a model fit on part of the training data but
+applied to a model refit on all of it, whose scores sit on a different
+scale. Gradient boosting then appeared to warn for 46 of 62 stops; with
+the threshold applied to the model it was tuned on, the answer is 10 of
+57. (2) Episodes were grouped by consecutive row numbers, so a missing
+row split one stop into two (62 counted, 57 real). Episodes are now
+counted by the stop each row points to (`next_stop_event_id`). The best
+model and the permutation importance now use validation, not test.
+
+Also, the first version of the no-look-ahead
+test cut the data 10 rows after the compared rows, so a feature peeking
+10 rows ahead slipped through. Injecting such a feature (`lead()` instead
+of `lag()`) showed the test passing when it should fail. The cut now sits
+right after the compared rows, and the injected leak makes the test fail.
+
+**Alternatives rejected**
+
+- *Random train/test split.* Neighbouring rows are near copies, so a
+  random split leaks test information into training and inflates scores.
+- *Accuracy as the metric.* Predicting "no stop" always would score about
+  80 % on the test period and be useless.
+- *Deep learning (LSTM).* Far too little data (one day, ~100 stops) and
+  harder to explain.
+- *Tuning many hyperparameters.* With 57 test episodes, heavy tuning
+  would fit the noise. Settings were fixed up front.
+
+**Questions you should be able to answer**
+
+1. Why is "will a stop start in the next 10 s?" a better target than "is this row a stop?"
+2. Why must the split be by time, and what does the 10-second purge at the split prevent?
+3. The model ranks risk better than the base rate. Why is it still not ready to send alerts, and what went wrong with the first version's threshold?

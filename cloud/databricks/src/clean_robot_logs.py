@@ -63,15 +63,26 @@ RAW_SCHEMA = T.StructType(
 
 
 def read_staged_csv(spark: SparkSession, path: str) -> DataFrame:
-    """Read the staged CSVs written by robot_pipeline.cloud.s3 (values unchanged)."""
-    return (
+    """Read the staged CSVs written by robot_pipeline.cloud.s3 (values unchanged).
+
+    The same file can sit under several ``ingest_date=`` folders (uploaded on
+    different days). Only the copy from the latest ingest date is kept for each
+    source_file, so a re-upload replaces rather than duplicates, like the local
+    loader."""
+    raw = (
         spark.read.option("header", True)
         .option("quote", '"')
         .option("escape", '"')  # pandas writes a quote inside a value as ""
         .option("enforceSchema", False)  # check header names against the schema
         .schema(RAW_SCHEMA)
         .csv(path)
+        .withColumn(
+            "_ingest_date",
+            F.regexp_extract(F.col("_metadata.file_path"), r"ingest_date=([0-9-]+)", 1),
+        )
     )
+    latest = raw.groupBy("source_file").agg(F.max("_ingest_date").alias("_ingest_date"))
+    return raw.join(latest, ["source_file", "_ingest_date"]).drop("_ingest_date")
 
 
 def clean(raw: DataFrame) -> DataFrame:

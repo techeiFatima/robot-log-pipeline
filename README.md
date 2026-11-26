@@ -58,7 +58,7 @@ All local storage is DuckDB: `cobot.duckdb` for the batch tables,
 | Kafka stream (simulation) | ✅ | ✅ real Kafka 4.4.0 broker, full file replayed with injected disorder; Docker image tested in CI |
 | Monitoring and alerts | ✅ | ✅ on real data; webhook tested against a local server only |
 | S3, Snowflake, Databricks | ✅ code + config | ❌ **NOT RUN, needs accounts**. S3 tested on a mock; Snowflake target parses; the PySpark job ran on local Spark and matched dbt exactly |
-| Stop-prediction model | Phase 11 | see [Prediction model](#prediction-model) |
+| Stop-prediction model | ✅ | ✅ trained and evaluated on the real file, time-based split (see [Prediction model](#prediction-model)) |
 
 ## How to run (macOS or Linux, Python 3.13)
 
@@ -193,11 +193,44 @@ Success test: raw_logs vs stg_robot_logs
 
 ## Prediction model
 
-*Added in Phase 11.*
+**Question:** from what the robot has logged so far, will a *new*
+protective stop start within the next 10 seconds? Features come from the
+dbt model `ml_stop_features` and look only backwards; a test proves no
+feature peeks at later rows. The split is **by time**: models are fit on
+08:17 to 14:40 UTC, the threshold and the best model are chosen on 14:40
+to 14:57 UTC (validation), and the same fitted model is scored once on the
+test period, 14:57 to 15:36 UTC (2,121 rows, 0.63 h recorded,
+57 stop episodes). Full report: [`docs/model_report.md`](docs/model_report.md)
+(`python -m robot_pipeline.ml.train --write-docs`).
+
+| Approach | PR-AUC (95 % CI) | ROC-AUC | Stop episodes warned in time | False alarms per recorded hour |
+|---|---|---|---|---|
+| Base rate (no model) | 0.209 | 0.500 | 0 / 57 | 0 |
+| Rule: "a stop happened recently" | 0.157 (0.130–0.187) | 0.331 | 57 / 57, but only by warning almost all the time | 1.6 |
+| Logistic regression | 0.232 (0.200–0.269) | 0.485 | 29 / 57 | 103.9 |
+| **Gradient-boosted trees** | **0.325 (0.260–0.407)** | **0.703** | 10 / 57 | 32.0 |
+
+**Honest reading:**
+- Gradient-boosted trees **rank** risky moments better than chance: the
+  PR-AUC interval stays above the base rate. The most useful inputs (on
+  validation) are **how many stops happened in the last ~5 minutes** and
+  the **position within the work cycle**.
+- It is **not usable as a warning system**. At the threshold chosen
+  before seeing the test period, it warned for only 10 of 57 stops. The
+  test period has a much higher stop rate (20.9 % of rows precede a stop,
+  against 8.5 % in training), so a threshold tuned earlier in the day does
+  not carry over. Logistic regression is no better than the base rate.
+- The test is 38 minutes of one day on one robot; more days are needed
+  before trusting any of this. The live protective-stop alert, which
+  reacts within seconds, remains the tool to rely on.
+- An independent code review found that an earlier version tuned the
+  threshold on one model and applied it to a refit one, and split
+  episodes at missing rows. Both were fixed; the numbers above are
+  after the fix.
 
 ## Skills this project shows
 
-Python · SQL · dbt (models, tests, docs, cross-database macros) · DuckDB ·
+Python · SQL · machine learning (scikit-learn, time-based evaluation) · dbt (models, tests, docs, cross-database macros) · DuckDB ·
 Snowflake (second dbt target, not run) · Databricks / PySpark (run on
 local Spark, not on Databricks) · AWS S3 (boto3, tested on moto) ·
 Airflow · Kafka · Git (one PR per phase) · code review (every PR reviewed
