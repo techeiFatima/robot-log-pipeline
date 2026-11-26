@@ -8,18 +8,31 @@ models:
     columns:
       - name: stop_event_id
         description: Episode key.
+        data_tests:
+          - not_null
+          - unique
       - name: started_at
         description: event_ts of the first stop row (UTC).
+        data_tests:
+          - not_null
       - name: ended_at
         description: event_ts of the last stop row (UTC).
+        data_tests:
+          - not_null
       - name: started_hour
         description: started_at truncated to the hour.
       - name: cycle_id_at_start
         description: Cycle number on the first stop row.
+        data_tests:
+          - not_null
       - name: stop_rows
         description: Number of log rows in the episode.
+        data_tests:
+          - not_null
       - name: duration_seconds
         description: ended_at minus started_at; 0 for a one-row episode.
+        data_tests:
+          - not_null
       - name: grip_lost_during_stop
         description: True if any row in the episode had grip_lost.
       - name: avg_joint_temperature
@@ -40,6 +53,9 @@ models:
     columns:
       - name: hour_utc
         description: Start of the hour.
+        data_tests:
+          - not_null
+          - unique
       - name: rows_total
         description: All log rows in the hour, including unknown status.
       - name: rows_known_status
@@ -68,6 +84,9 @@ models:
     columns:
       - name: cycle_id
         description: The source cycle number.
+        data_tests:
+          - not_null
+          - unique
       - name: cycle_stretches
         description: How many separate stretches of the log carry this cycle number (2 for cycles 224-227 and 229-233).
       - name: rows_total
